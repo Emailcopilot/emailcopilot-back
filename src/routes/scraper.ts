@@ -16,7 +16,7 @@ scraperRouter.get("/jobs", async (req: Request, res: Response) => {
 
     const [jobs, [{ total }]] = await Promise.all([
       db.query.scrapeJobs.findMany({
-        orderBy: desc(scrapeJobs.ranAt),
+        orderBy: desc(scrapeJobs.createdAt),
         limit: limitNum,
         offset,
         with: { leads: { columns: { id: true } } },
@@ -42,8 +42,8 @@ scraperRouter.post("/trigger", async (req: Request, res: Response) => {
     if (query) {
       await db
         .insert(settings)
-        .values({ key: "scrape_query", value: query })
-        .onConflictDoUpdate({ target: settings.key, set: { value: query, updated_at: new Date() } });
+        .values({ userId: req.body.userId, key: "scrape_query", value: query })
+        .onConflictDoUpdate({ target: settings.key, set: { value: query, updatedAt: new Date() } });
     }
 
     runScrapeJob().catch(console.error);

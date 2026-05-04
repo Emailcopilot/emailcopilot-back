@@ -11,8 +11,9 @@ import {
     invoices,
     leads,
     scrapeJobs,
+    users,
 } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { testSmtpConnection } from "../services/mailer";
 
 export const emailProfilesRouter: Router = Router();
@@ -28,7 +29,8 @@ export const emailProfilesRouter: Router = Router();
 
 emailProfilesRouter.get("/", async (_req: Request, res: Response) => {
     try {
-        const rows = await db.select().from(emailProfiles);
+        const user = _req.dbUser;
+        const rows = await db.select().from(emailProfiles).where(eq(emailProfiles.userId, user?.id));
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch email profiles" });
@@ -37,8 +39,9 @@ emailProfilesRouter.get("/", async (_req: Request, res: Response) => {
 
 emailProfilesRouter.get("/:id", async (req: Request, res: Response) => {
     try {
+        const user = req.dbUser;
         const id = Number(req.params.id);
-        const [row] = await db.select().from(emailProfiles).where(eq(emailProfiles.id, id));
+        const [row] = await db.select().from(emailProfiles).where(and(eq(emailProfiles.userId, user?.id), eq(emailProfiles.id, id)));
         if (!row) return res.status(404).json({ error: "Email profile not found" });
         res.json(row);
     } catch (err) {
@@ -48,7 +51,10 @@ emailProfilesRouter.get("/:id", async (req: Request, res: Response) => {
 
 emailProfilesRouter.post("/", async (req: Request, res: Response) => {
     try {
-        const [created] = await db.insert(emailProfiles).values(req.body).returning();
+        const user = req.dbUser;
+
+
+        const [created] = await db.insert(emailProfiles).values({ ...req.body, userId: user?.id }).returning();
         res.status(201).json(created);
     } catch (err) {
         console.error("Error creating email profile:", err);
@@ -59,10 +65,12 @@ emailProfilesRouter.post("/", async (req: Request, res: Response) => {
 emailProfilesRouter.put("/:id", async (req: Request, res: Response) => {
     try {
         const id = Number(req.params.id);
+        const user = req.dbUser;
+
         const [updated] = await db
             .update(emailProfiles)
             .set({ ...req.body, updatedAt: new Date() })
-            .where(eq(emailProfiles.id, id))
+            .where(and(eq(emailProfiles.userId, user?.id), eq(emailProfiles.id, id)))
             .returning();
         if (!updated) return res.status(404).json({ error: "Email profile not found" });
         res.json(updated);
@@ -75,7 +83,8 @@ emailProfilesRouter.put("/:id", async (req: Request, res: Response) => {
 emailProfilesRouter.delete("/:id", async (req: Request, res: Response) => {
     try {
         const id = Number(req.params.id);
-        await db.delete(emailProfiles).where(eq(emailProfiles.id, id));
+        const user = req.dbUser;
+        await db.delete(emailProfiles).where(and(eq(emailProfiles.userId, user?.id), eq(emailProfiles.id, id)));
         res.status(204).send();
     } catch (err) {
         console.error("Error deleting email profile:", err);
@@ -86,11 +95,13 @@ emailProfilesRouter.delete("/:id", async (req: Request, res: Response) => {
 // POST /api/email-profiles/:id/verify — tests SMTP connection for this profile
 emailProfilesRouter.post("/:id/verify", async (req: Request, res: Response) => {
     try {
+        const user = req.dbUser;
+        if (!user) return res.status(404).json({ error: "User not found" });
         const id = Number(req.params.id);
         const [profile] = await db
             .select()
             .from(emailProfiles)
-            .where(eq(emailProfiles.id, id));
+            .where(and(eq(emailProfiles.userId, user?.id), eq(emailProfiles.id, id)));
         if (!profile) return res.status(404).json({ error: "Email profile not found" });
         // Delegate to mailer's SMTP test — it reads config from the settings table
         const result = await testSmtpConnection();
@@ -98,12 +109,12 @@ emailProfilesRouter.post("/:id/verify", async (req: Request, res: Response) => {
             await db
                 .update(emailProfiles)
                 .set({ status: "active", lastVerifiedAt: new Date(), updatedAt: new Date() })
-                .where(eq(emailProfiles.id, id));
+                .where(and(eq(emailProfiles.userId, user?.id), eq(emailProfiles.id, id)));
         } else {
             await db
                 .update(emailProfiles)
                 .set({ status: "error", updatedAt: new Date() })
-                .where(eq(emailProfiles.id, id));
+                .where(and(eq(emailProfiles.userId, user?.id), eq(emailProfiles.id, id)));
         }
         res.json(result);
     } catch (err) {

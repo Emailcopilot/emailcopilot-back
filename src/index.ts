@@ -16,6 +16,7 @@ import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { runDailySendJob } from "./services/mailer";
 import { initScheduler, getSchedulerStatus } from "./services/scheduler";
 import { usersRouter } from "./routes/user";
+import { clerkMiddleware } from "@clerk/express";
 
 
 const app: express.Application = express();
@@ -27,10 +28,12 @@ app.use(express.json());
 app.use(
   cors({
     origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
-    methods: ["GET", "POST", "PATCH", "DELETE"],
-    allowedHeaders: ["Content-Type", "x-api-key"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "PUT"], // ← also missing PUT
+    allowedHeaders: ["Content-Type", "Authorization"], // ← add this
+    credentials: true,
   })
 );
+app.use(clerkMiddleware())
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 

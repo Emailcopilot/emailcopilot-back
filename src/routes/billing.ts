@@ -29,13 +29,11 @@ export const billingRouter: Router = Router();
 // POST /api/billing/cancel
 // PUT  /api/billing/payment-method
 
-billingRouter.get("/subscription/:clerkId", async (req: Request, res: Response) => {
+billingRouter.get("/subscription", async (req: Request, res: Response) => {
     try {
-        // get the user's subscription by clerkId (stubbed to return the first subscription for now)
+        const user = req.dbUser;
 
-        const user = await db.select().from(users).where(eq(users.clerkId, req.params.clerkId)).limit(1);
-        if (user.length === 0) return res.status(404).json({ error: "User not found" });
-        const subscription = await db.select().from(subscriptions).where(eq(subscriptions.userId, user[0].id)).limit(1);
+        const subscription = await db.select().from(subscriptions).where(eq(subscriptions.userId, user.id)).limit(1);
         if (subscription.length === 0) return res.status(404).json({ error: "Subscription not found" });
         res.json(subscription[0]);
     } catch (err) {
@@ -43,9 +41,11 @@ billingRouter.get("/subscription/:clerkId", async (req: Request, res: Response) 
     }
 });
 
-billingRouter.get("/invoices", async (_req: Request, res: Response) => {
+billingRouter.get("/invoices", async (req: Request, res: Response) => {
     try {
-        const rows = await db.select().from(invoices);
+        const user = req.dbUser;
+
+        const rows = await db.select().from(invoices).where(eq(invoices.userId, user.id));
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch invoices" });
@@ -63,6 +63,8 @@ billingRouter.get("/plans", async (_req: Request, res: Response) => {
 
 billingRouter.post("/subscribe", async (req: Request, res: Response) => {
     try {
+        const user = req.dbUser;
+
         const { planId } = req.body as { planId: string };
         if (!planId) return res.status(400).json({ error: "planId is required" });
         // Stub: real impl would call Stripe and create a subscription row

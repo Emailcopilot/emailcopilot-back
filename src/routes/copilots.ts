@@ -12,7 +12,7 @@ import {
     leads,
     scrapeJobs,
 } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { runDailySendJob, testSmtpConnection } from "../services/mailer";
 import { runScrapeJob } from "../services/scraper";
 
@@ -27,9 +27,10 @@ export const copilotsRouter: Router = Router();
 // DELETE /api/copilots/:id
 // PATCH  /api/copilots/:id/status
 
-copilotsRouter.get("/", async (_req: Request, res: Response) => {
+copilotsRouter.get("/", async (req: Request, res: Response) => {
     try {
-        const rows = await db.select().from(copilots);
+        const user = req.dbUser;
+        const rows = await db.select().from(copilots).where(eq(copilots.userId, user.id));
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch copilots" });
@@ -39,7 +40,8 @@ copilotsRouter.get("/", async (_req: Request, res: Response) => {
 copilotsRouter.get("/:id", async (req: Request, res: Response) => {
     try {
         const id = Number(req.params.id);
-        const [row] = await db.select().from(copilots).where(eq(copilots.id, id));
+        const user = req.dbUser;
+        const [row] = await db.select().from(copilots).where(and(eq(copilots.id, id), eq(copilots.userId, user.id)));
         if (!row) return res.status(404).json({ error: "Copilot not found" });
         res.json(row);
     } catch (err) {
@@ -49,7 +51,8 @@ copilotsRouter.get("/:id", async (req: Request, res: Response) => {
 
 copilotsRouter.post("/", async (req: Request, res: Response) => {
     try {
-        const [created] = await db.insert(copilots).values(req.body).returning();
+        const user = req.dbUser;
+        const [created] = await db.insert(copilots).values({ ...req.body, userId: user.id }).returning();
         res.status(201).json(created);
     } catch (err) {
         console.error("Error creating copilot:", err);
@@ -59,11 +62,12 @@ copilotsRouter.post("/", async (req: Request, res: Response) => {
 
 copilotsRouter.put("/:id", async (req: Request, res: Response) => {
     try {
+        const user = req.dbUser;
         const id = Number(req.params.id);
         const [updated] = await db
             .update(copilots)
             .set({ ...req.body, updatedAt: new Date() })
-            .where(eq(copilots.id, id))
+            .where(and(eq(copilots.id, id), eq(copilots.userId, user.id)))
             .returning();
         if (!updated) return res.status(404).json({ error: "Copilot not found" });
         res.json(updated);
@@ -76,7 +80,8 @@ copilotsRouter.put("/:id", async (req: Request, res: Response) => {
 copilotsRouter.delete("/:id", async (req: Request, res: Response) => {
     try {
         const id = Number(req.params.id);
-        await db.delete(copilots).where(eq(copilots.id, id));
+        const user = req.dbUser;
+        await db.delete(copilots).where(and(eq(copilots.id, id), eq(copilots.userId, user.id)));
         res.status(204).send();
     } catch (err) {
         console.error("Error deleting copilot:", err);
@@ -88,13 +93,14 @@ copilotsRouter.delete("/:id", async (req: Request, res: Response) => {
 copilotsRouter.patch("/:id/status", async (req: Request, res: Response) => {
     try {
         const id = Number(req.params.id);
+        const user = req.dbUser;
         const { status } = req.body as {
             status: "draft" | "active" | "paused" | "archived";
         };
         const [updated] = await db
             .update(copilots)
             .set({ status, updatedAt: new Date() })
-            .where(eq(copilots.id, id))
+            .where(and(eq(copilots.id, id), eq(copilots.userId, user.id)))
             .returning();
         if (!updated) return res.status(404).json({ error: "Copilot not found" });
 

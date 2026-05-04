@@ -4,6 +4,7 @@ import {
     users
 } from "../db/schema";
 import { eq } from "drizzle-orm";
+import { getAuth } from "@clerk/express";
 
 export const usersRouter: Router = Router();
 
@@ -17,6 +18,15 @@ export const usersRouter: Router = Router();
 
 usersRouter.get("/", async (_req: Request, res: Response) => {
     try {
+        const { userId } = getAuth(_req)
+
+        console.log("requireApiKey middleware - auth object:", userId);
+        if (!userId) {
+            console.warn("Unauthorized access attempt without user ID");
+            res.status(401).json({ error: "Unauthorized: No user ID in auth object" });
+            return;
+        }
+
         const rows = await db.select().from(users);
         res.json(rows);
     } catch (err) {
@@ -27,6 +37,15 @@ usersRouter.get("/", async (_req: Request, res: Response) => {
 
 usersRouter.get("/:id", async (req: Request, res: Response) => {
     try {
+        const { userId } = getAuth(req)
+
+        console.log("requireApiKey middleware - auth object:", userId);
+        if (!userId) {
+            console.warn("Unauthorized access attempt without user ID");
+            res.status(401).json({ error: "Unauthorized: No user ID in auth object" });
+            return;
+        }
+
         const [row] = await db.select().from(users).where(eq(users.clerkId, req.params.id));
         if (!row) return res.status(404).json({ error: "User not found" });
         res.json(row);
@@ -52,6 +71,15 @@ usersRouter.post("/", async (req: Request, res: Response) => {
 
 usersRouter.put("/:id", async (req: Request, res: Response) => {
     try {
+        const { userId } = getAuth(req)
+
+        console.log("requireApiKey middleware - auth object:", userId);
+        if (!userId) {
+            console.warn("Unauthorized access attempt without user ID");
+            res.status(401).json({ error: "Unauthorized: No user ID in auth object" });
+            return;
+        }
+
         const [updated] = await db.update(users).set(req.body).where(eq(users.clerkId, req.params.id)).returning();
         if (!updated) return res.status(404).json({ error: "User not found" });
         res.json(updated);

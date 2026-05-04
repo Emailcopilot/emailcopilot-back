@@ -54,7 +54,7 @@ app.use("/integrations", requireApiKey, integrationsRouter);
 app.use("/scrape-jobs", requireApiKey, scrapeJobsRouter);
 app.use("/email-profiles", requireApiKey, emailProfilesRouter);
 app.use("/scrape-profiles", requireApiKey, scrapeProfilesRouter);
-app.use("/users", requireApiKey, usersRouter);
+app.use("/users", usersRouter);
 
 // manual trigger for the daily send job (useful for testing without waiting for cron)
 app.post("/send-now", requireApiKey, async (_req, res) => {

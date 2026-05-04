@@ -37,10 +37,10 @@ async function seed() {
   const [user] = await db
     .insert(schema.users)
     .values({
+      clerkId: "clerk_user_123",
       firstName: "Alex",
       lastName: "Martin",
       email: "alex@example.com",
-      passwordHash: "$2b$10$exampleHashForDevOnlyDoNotUseInProd",
       timezone: "America/New_York",
       theme: "light",
       notifyOnReply: true,
@@ -97,9 +97,8 @@ async function seed() {
       {
         userId: user.id,
         name: "LinkedIn Tech Founders",
-        url: "https://linkedin.com/search/results/people/?keywords=founder+tech",
-        selector: ".reusable-search__result-container",
-        fields: ["name", "title", "company", "location"],
+        searchQuery: "site:linkedin.com/in/ AND (\"founder\" OR \"ceo\") AND (\"tech\" OR \"software\")",
+        resultsPerRun: 50,
         schedule: "0 9 * * 1",
         status: "done",
         resultsCount: 342,
@@ -108,9 +107,9 @@ async function seed() {
       {
         userId: user.id,
         name: "Crunchbase Seed Startups",
-        url: "https://crunchbase.com/discover/organizations",
-        selector: ".component--card",
-        fields: ["name", "email", "website", "funding"],
+        searchQuery: "site:crunchbase.com/ AND (\"seed\" OR \"pre-seed\") AND (\"tech\" OR \"software\")",
+        resultsPerRun: 50,
+        schedule: "0 9 * * 1",
         status: "idle",
         resultsCount: 0,
         lastRun: null,

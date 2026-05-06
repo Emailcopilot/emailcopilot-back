@@ -297,7 +297,7 @@ async function handleSuccessfulPayment(payment: any, userId: number, plan: any) 
                     amount: { currency: plan.currency, value: plan.amount },
                     interval: plan.interval,
                     description: `${plan.name} plan`,
-                    webhookUrl: `${process.env.APP_URL}/billing/webhook`,
+                    webhookUrl: `${process.env.ALLOWED_ORIGIN}/billing/webhook`,
                     metadata: { planId: plan.id, userId: String(userId) },
                 });
 

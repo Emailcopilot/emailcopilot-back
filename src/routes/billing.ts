@@ -2,7 +2,10 @@ import { Router, Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { subscriptions, invoices, users } from "../db/schema";
 import { eq, desc } from "drizzle-orm";
-import createMollieClient, { MollieClient } from "@mollie/api-client";
+import createMollieClient, {
+    MollieClient,
+    SequenceType
+} from "@mollie/api-client";
 import { getAuth } from "@clerk/express";
 
 export const billingRouter: Router = Router();
@@ -153,7 +156,7 @@ billingRouter.post("/subscribe", async (req: Request, res: Response) => {
         const payment = await mollie.payments.create({
             amount: { currency: plan.currency, value: plan.amount },
             customerId: mollieCustomerId,
-            sequenceType: "first",
+            sequenceType: SequenceType.first,
             description: `${plan.name} plan – first payment`,
             redirectUrl: `${process.env.APP_URL}/billing/subscribe/return?planId=${planId}&userId=${user.id}`,
             webhookUrl: `${process.env.APP_URL}/billing/webhook`,
@@ -270,7 +273,10 @@ async function handleSuccessfulPayment(payment: any, userId: number, plan: any) 
 
         // Create recurring subscription only once (after first successful payment)
         if (!mollieSubscriptionId && payment.customerId) {
-            const mandates = await mollie.customerMandates.list({ customerId: payment.customerId });
+            const mandates = await mollie.customerMandates.page({
+                customerId: payment.customerId,
+            });
+
             const validMandate = mandates.find((m: any) => m.status === "valid");
 
             if (validMandate) {

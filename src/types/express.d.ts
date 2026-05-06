@@ -5,13 +5,7 @@ declare global {
     namespace Express {
         interface Request {
             auth: AuthObject & { userId?: string | null };
-            dbUser: {
-                id: number;
-                clerkId: string;
-                email: string;
-                firstName: string;
-                lastName: string;
-            };
+            // assign user type based on your db schema, e.g.:
+            dbUser?: user; // replace 'user' with the actual type of your user object from the database
         }
     }
-}

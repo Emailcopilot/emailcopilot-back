@@ -213,24 +213,35 @@ billingRouter.get("/subscribe/return", (req: Request, res: Response) => {
 // POST /billing/webhook
 billingRouter.post("/webhook", async (req: Request, res: Response) => {
     const { id } = req.body as { id?: string };
+    console.log("📬 Webhook received with id:", id);
     if (!id) return res.status(400).send("Missing id");
 
     try {
         // Payment webhook (first payment + recurring)
         if (id.startsWith("tr_")) {
+            console.log(`💳 Processing payment webhook: ${id}`);
             const payment = await mollie.payments.get(id);
+            console.log(`💳 Payment status: ${payment.status}, customerId: ${payment.customerId}`);
             const meta = payment.metadata as { planId?: string; userId?: string } | undefined;
             const userId = meta?.userId ? parseInt(meta.userId) : null;
             const planId = meta?.planId;
 
-            if (!userId || !planId) return res.status(200).send("ok");
+            if (!userId || !planId) {
+                console.log("⚠️ Missing userId or planId in payment metadata");
+                return res.status(200).send("ok");
+            }
 
             const plan = getPlan(planId);
-            if (!plan) return res.status(200).send("ok");
+            if (!plan) {
+                console.log(`⚠️ Plan not found: ${planId}`);
+                return res.status(200).send("ok");
+            }
 
             if (payment.status === "paid") {
+                console.log(`✅ Payment successful for user ${userId}, plan ${planId}`);
                 await handleSuccessfulPayment(payment, userId, plan);
             } else if (payment.status === "failed" || payment.status === "expired" || payment.status === "canceled") {
+                console.log(`❌ Payment ${payment.status} for payment id ${id}`);
                 await db
                     .update(invoices)
                     .set({ status: "failed" })
@@ -240,12 +251,13 @@ billingRouter.post("/webhook", async (req: Request, res: Response) => {
 
         // Subscription webhook (recurring status changes)
         else if (id.startsWith("sub_")) {
+            console.log(`🔄 Processing subscription webhook: ${id}`);
             await handleSubscriptionWebhook(id);
         }
 
         res.status(200).send("ok");
     } catch (err) {
-        console.error("Webhook error:", err);
+        console.error("❌ Webhook error:", err);
         res.status(200).send("ok"); // Always acknowledge to Mollie
     }
 });

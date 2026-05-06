@@ -6,6 +6,7 @@ declare global {
         interface Request {
             auth: AuthObject & { userId?: string | null };
             // assign user type based on your db schema, e.g.:
-            dbUser?: user; // replace 'user' with the actual type of your user object from the database
+            dbUser?: user;
         }
     }
+}

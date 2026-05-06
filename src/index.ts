@@ -48,7 +48,7 @@ app.use("/emails", requireApiKey, emailsRouter);
 app.use("/scraper", requireApiKey, scraperRouter);
 app.use("/settings", requireApiKey, settingsRouter);
 app.use("/templates", requireApiKey, templatesRouter);
-app.use("/billing", requireApiKey, billingRouter);
+app.use("/billing", billingRouter);
 app.use("/copilots", requireApiKey, copilotsRouter);
 app.use("/integrations", requireApiKey, integrationsRouter);
 app.use("/scrape-jobs", requireApiKey, scrapeJobsRouter);

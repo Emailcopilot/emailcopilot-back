@@ -15,10 +15,7 @@ import {
 export const emailProviderEnum = pgEnum("email_provider", ["gmail", "outlook", "smtp"]);
 export const emailProfileStatusEnum = pgEnum("email_profile_status", ["active", "inactive", "error"]);
 
-// scrapeProfiles (config-level) reuses this; scrapeJobs (run-level) has its own below
 export const scrapeStatusEnum = pgEnum("scrape_status", ["idle", "running", "done", "error"]);
-
-// scraper.ts writes: "running" | "done" | "failed"  ← needs "failed"
 export const scrapeJobStatusEnum = pgEnum("scrape_job_status", ["running", "done", "failed"]);
 
 export const templateCategoryEnum = pgEnum("template_category", [
@@ -36,6 +33,8 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "canceled",
   "past_due",
   "trialing",
+  "pending",   // Mollie: waiting for first payment to clear
+  "suspended", // Mollie: mandate became invalid
 ]);
 
 export const invoiceStatusEnum = pgEnum("invoice_status", ["paid", "pending", "failed"]);
@@ -55,10 +54,7 @@ export const integrationProviderEnum = pgEnum("integration_provider", [
 
 export const themeEnum = pgEnum("theme", ["light", "dark", "system"]);
 
-// leads.status — mailer.ts writes: "new" | "queued" | "sent"
 export const leadStatusEnum = pgEnum("lead_status", ["new", "queued", "sent", "failed", "unsubscribed"]);
-
-// emailLogs.status — mailer.ts writes: "sent" | "failed"
 export const emailLogStatusEnum = pgEnum("email_log_status", ["sent", "failed", "opened", "replied"]);
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -66,8 +62,8 @@ export const emailLogStatusEnum = pgEnum("email_log_status", ["sent", "failed", 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   clerkId: varchar("clerk_id", { length: 255 }).notNull().unique(),
-  firstName: varchar("first_name", { length: 100 }).notNull().default(""),
-  lastName: varchar("last_name", { length: 100 }).notNull().default(""),
+  firstName: varchar("first_name", { length: 100 }).default(""),
+  lastName: varchar("last_name", { length: 100 }).default(""),
   email: varchar("email", { length: 255 }).notNull().unique(),
   timezone: varchar("timezone", { length: 100 }).notNull().default("UTC"),
   theme: themeEnum("theme").notNull().default("light"),
@@ -79,9 +75,6 @@ export const users = pgTable("users", {
 });
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
-// mailer.ts reads:  smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_name, daily_send_limit
-// scraper.ts reads: scrape_query, scrape_results_per_run
-// Simple key/value store scoped per user.
 
 export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
@@ -89,7 +82,6 @@ export const settings = pgTable("settings", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   key: varchar("key", { length: 100 }).notNull(),
-  // value is always stored as text; callers cast (parseInt etc.) at read time
   value: text("value"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -117,9 +109,6 @@ export const emailProfiles = pgTable("email_profiles", {
 });
 
 // ─── Email Templates ──────────────────────────────────────────────────────────
-// mailer.ts: db.query.emailTemplates.findFirst({ where: eq(emailTemplates.isActive, true) })
-//            uses fields: isActive, subject, body
-// This replaces the generic `templates` table for outbound email content.
 
 export const emailTemplates = pgTable("email_templates", {
   id: serial("id").primaryKey(),
@@ -128,10 +117,8 @@ export const emailTemplates = pgTable("email_templates", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 150 }).notNull(),
   subject: text("subject").notNull(),
-  // Supports {{companyName}} {{email}} {{website}} {{phone}} interpolation (see mailer.ts)
   body: text("body").notNull(),
   category: templateCategoryEnum("category").notNull().default("Other"),
-  // mailer.ts: eq(emailTemplates.isActive, true)
   isActive: boolean("is_active").notNull().default(false),
   variables: jsonb("variables").$type<string[]>().notNull().default([]),
   usageCount: integer("usage_count").notNull().default(0),
@@ -140,15 +127,11 @@ export const emailTemplates = pgTable("email_templates", {
 });
 
 // ─── Scrape Jobs ──────────────────────────────────────────────────────────────
-// scraper.ts: db.insert(scrapeJobs).values({ query, status: "running" })
-//             db.update(scrapeJobs).set({ status: "done", leadsFound, finishedAt })
-//             db.update(scrapeJobs).set({ status: "failed", errorMessage, finishedAt })
 
 export const scrapeJobs = pgTable("scrape_jobs", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .references(() => users.id, { onDelete: "set null" }),
-  // scraper.ts stores the Google Maps search string here
   query: text("query").notNull(),
   status: scrapeJobStatusEnum("status").notNull().default("running"),
   leadsFound: integer("leads_found").notNull().default(0),
@@ -158,9 +141,6 @@ export const scrapeJobs = pgTable("scrape_jobs", {
 });
 
 // ─── Leads ────────────────────────────────────────────────────────────────────
-// scraper.ts inserts: companyName, email, website, phone, address, sourceQuery, scrapeJobId, status("new")
-// mailer.ts reads:    status("new"), scrapedAt, email, companyName
-//           updates:  status("queued"), status("sent"), emailedAt
 
 export const leads = pgTable("leads", {
   id: serial("id").primaryKey(),
@@ -168,26 +148,20 @@ export const leads = pgTable("leads", {
     .references(() => users.id, { onDelete: "set null" }),
   companyName: varchar("company_name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull().unique(),
-  website: text("website").unique(),          // unique — scraper deduplicates on this
+  website: text("website").unique(),
   phone: varchar("phone", { length: 50 }),
   address: text("address"),
-  // scraper.ts stores the Maps search query that produced this lead
   sourceQuery: text("source_query"),
   scrapeJobId: integer("scrape_job_id")
     .references(() => scrapeJobs.id, { onDelete: "set null" }),
-  // mailer.ts: orderBy leads.scrapedAt  →  needs to be a real column
   scrapedAt: timestamp("scraped_at").notNull().defaultNow(),
   status: leadStatusEnum("status").notNull().default("new"),
-  // mailer.ts: .set({ status: "sent", emailedAt: new Date() })
   emailedAt: timestamp("emailed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
-// mailer.ts inserts on success: { leadId, templateId, subject, status: "sent" }
-// mailer.ts inserts on failure: { leadId, templateId, subject, status: "failed", errorMessage }
-// mailer.ts counts:  .where(and(eq(emailLogs.status, "sent"), gte(emailLogs.sentAt, startOfDay)))
 
 export const emailLogs = pgTable("email_logs", {
   id: serial("id").primaryKey(),
@@ -199,12 +173,10 @@ export const emailLogs = pgTable("email_logs", {
   subject: text("subject").notNull(),
   status: emailLogStatusEnum("status").notNull(),
   errorMessage: text("error_message"),
-  // mailer.ts: gte(emailLogs.sentAt, startOfDay) — tracks when the attempt was made
   sentAt: timestamp("sent_at").notNull().defaultNow(),
 });
 
-// ─── Scrape Profiles (config-level) ──────────────────────────────────────────
-// These are reusable scrape configurations distinct from individual scrape job runs.
+// ─── Scrape Profiles ──────────────────────────────────────────────────────────
 
 export const scrapeProfiles = pgTable("scrape_profiles", {
   id: serial("id").primaryKey(),
@@ -249,7 +221,6 @@ export const copilots = pgTable("copilots", {
   scrapeProfileId: integer("scrape_profile_id").references(() => scrapeProfiles.id, {
     onDelete: "set null",
   }),
-  // Now references emailTemplates (not the removed generic templates table)
   templateId: integer("template_id").references(() => emailTemplates.id, {
     onDelete: "set null",
   }),
@@ -278,6 +249,11 @@ export const integrations = pgTable("integrations", {
 });
 
 // ─── Billing / Subscriptions ──────────────────────────────────────────────────
+// Mollie flow:
+//   1. POST /billing/subscribe  → create Mollie customer + first payment (checkout URL returned)
+//   2. Mollie redirects back    → GET  /billing/subscribe/return?planId=&userId=
+//   3. Mollie fires webhook     → POST /billing/webhook  (payment status updates)
+//   4. On paid first payment    → create Mollie subscription (recurring)
 
 export const subscriptions = pgTable("subscriptions", {
   id: serial("id").primaryKey(),
@@ -285,11 +261,16 @@ export const subscriptions = pgTable("subscriptions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   planId: varchar("plan_id", { length: 50 }).notNull(),
-  status: subscriptionStatusEnum("status").notNull().default("active"),
-  stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
-  stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
-  currentPeriodStart: timestamp("current_period_start").notNull(),
-  currentPeriodEnd: timestamp("current_period_end").notNull(),
+  status: subscriptionStatusEnum("status").notNull().default("pending"),
+
+  // ── Mollie IDs (replaced Stripe) ──────────────────────────────────────────
+  mollieCustomerId: varchar("mollie_customer_id", { length: 255 }),
+  mollieSubscriptionId: varchar("mollie_subscription_id", { length: 255 }),
+  // The mandate created after the first payment succeeds
+  mollieMandateId: varchar("mollie_mandate_id", { length: 255 }),
+
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -303,11 +284,12 @@ export const invoices = pgTable("invoices", {
   subscriptionId: integer("subscription_id").references(() => subscriptions.id, {
     onDelete: "set null",
   }),
-  stripeInvoiceId: varchar("stripe_invoice_id", { length: 255 }),
-  amount: integer("amount").notNull(), // stored in cents
-  currency: varchar("currency", { length: 10 }).notNull().default("usd"),
+  // ── Mollie payment ID (replaced Stripe invoice ID) ────────────────────────
+  molliePaymentId: varchar("mollie_payment_id", { length: 255 }),
+  amount: integer("amount").notNull(),   // stored in cents
+  currency: varchar("currency", { length: 10 }).notNull().default("eur"),
   status: invoiceStatusEnum("status").notNull().default("pending"),
-  downloadUrl: text("download_url"),
+  downloadUrl: text("download_url"),     // Mollie hosted payment page / receipt
   paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

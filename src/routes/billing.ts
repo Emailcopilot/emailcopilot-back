@@ -213,6 +213,7 @@ billingRouter.get("/subscribe/return", (req: Request, res: Response) => {
 // POST /billing/webhook
 billingRouter.post("/webhook", async (req: Request, res: Response) => {
     const { id } = req.body as { id?: string };
+    console.log("📬 Webhook received with body:", req.body);
     console.log("📬 Webhook received with id:", id);
     if (!id) return res.status(400).send("Missing id");
 

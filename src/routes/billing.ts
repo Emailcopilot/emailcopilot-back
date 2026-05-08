@@ -206,7 +206,7 @@ billingRouter.post("/subscribe", async (req: Request, res: Response) => {
 // GET /billing/subscribe/return
 billingRouter.get("/subscribe/return", (req: Request, res: Response) => {
     const { planId } = req.query as { planId?: string };
-    const frontendUrl = process.env.APP_URL ?? "http://localhost:3000";
+    const frontendUrl = process.env.ALLOWED_ORIGIN ?? "http://localhost:3000";
     res.redirect(`${frontendUrl}/billing?plan=${planId ?? ""}&status=pending`);
 });
 

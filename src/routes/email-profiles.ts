@@ -15,6 +15,7 @@ import {
 } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { testSmtpConnection } from "../services/mailer";
+import { incrementUsage } from "../lib/helpers";
 
 export const emailProfilesRouter: Router = Router();
 
@@ -55,6 +56,7 @@ emailProfilesRouter.post("/", async (req: Request, res: Response) => {
 
 
         const [created] = await db.insert(emailProfiles).values({ ...req.body, userId: user?.id }).returning();
+        await incrementUsage(user?.id, user?.subscriptionId, { emailProfilesCreated: 1 });
         res.status(201).json(created);
     } catch (err) {
         console.error("Error creating email profile:", err);

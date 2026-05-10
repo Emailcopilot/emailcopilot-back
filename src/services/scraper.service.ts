@@ -1,9 +1,11 @@
-import { chromium as playwrightChromium } from 'playwright-extra';
-import stealth from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page } from 'playwright';
-import { leads, scrapeJobs, settings } from "../db/schema";
-import { eq } from "drizzle-orm";
-import { db } from '../db/drizzle';
+import { chromium as playwrightChromium } from "playwright-extra";
+import stealth from "puppeteer-extra-plugin-stealth";
+import { Browser, Page } from "playwright";
+import { leads, scrapeJobs, scrapeProfiles } from "../db/schema";
+import { eq, desc, count } from "drizzle-orm";
+import { db } from "../db/drizzle";
+import type { ScrapeProfile } from "../db/schema";
+import type { TriggerScrapeInput, ListJobsInput } from "../validators/scraper.validator";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScrapedLead {
@@ -16,14 +18,13 @@ interface ScrapedLead {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SCRAPE_TIMEOUT = 45_000;
-const RESULTS_LIMIT = 10;
+const DEFAULT_RESULTS_LIMIT = 10;
+const IS_PROD = process.env.NODE_ENV === "production";
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const randomDelay = (min = 1500, max = 4000) =>
   delay(Math.floor(Math.random() * (max - min + 1)) + min);
 
-// Apply stealth plugin globally
 playwrightChromium.use(stealth());
 
 // ─── Browser helpers ──────────────────────────────────────────────────────────
@@ -33,23 +34,23 @@ async function launchBrowser(): Promise<Browser> {
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",      // ← key one for shared hosting
+      "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--no-zygote",                  // ← helps in restricted environments
+      "--no-zygote",
       "--disable-extensions",
       "--disable-software-rasterizer",
-      "--disable-blink-features=AutomationControlled", // ← add this
-
+      "--disable-blink-features=AutomationControlled",
     ],
   });
 }
 
 async function newStealthPage(browser: Browser): Promise<Page> {
   const context = await browser.newContext({
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
     viewport: {
       width: 1280 + Math.floor(Math.random() * 200),
-      height: 800 + Math.floor(Math.random() * 150)
+      height: 800 + Math.floor(Math.random() * 150),
     },
     locale: "en-US",
     timezoneId: "America/New_York",
@@ -66,8 +67,7 @@ async function newStealthPage(browser: Browser): Promise<Page> {
   const page = await context.newPage();
 
   await page.route("**/*", (route) => {
-    const type = route.request().resourceType();
-    if (["font", "media"].includes(type)) {
+    if (["font", "media"].includes(route.request().resourceType())) {
       route.abort();
     } else {
       route.continue();
@@ -76,17 +76,17 @@ async function newStealthPage(browser: Browser): Promise<Page> {
 
   await context.addInitScript(() => {
     // @ts-ignore
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
     // @ts-ignore
     window.chrome = { runtime: {}, loadTimes: () => ({}) };
     // @ts-ignore
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
   });
 
   return page;
 }
 
-// ─── Email extraction helpers ─────────────────────────────────────────────────
+// ─── Email extraction ─────────────────────────────────────────────────────────
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 
 const IGNORED_EMAIL_DOMAINS = [
@@ -96,9 +96,11 @@ const IGNORED_EMAIL_DOMAINS = [
 ];
 
 function extractEmails(text: string): string[] {
-  const matches = text.match(EMAIL_REGEX) || [];
-  return matches.filter(email =>
-    !IGNORED_EMAIL_DOMAINS.some(domain => email.toLowerCase().endsWith(`@${domain}`))
+  return (text.match(EMAIL_REGEX) || []).filter(
+    (email) =>
+      !IGNORED_EMAIL_DOMAINS.some((domain) =>
+        email.toLowerCase().endsWith(`@${domain}`)
+      )
   );
 }
 
@@ -107,13 +109,13 @@ async function findEmailOnWebsite(page: Page, website: string): Promise<string |
     const url = website.startsWith("http") ? website : `https://${website}`;
     await page.goto(url, { timeout: SCRAPE_TIMEOUT, waitUntil: "domcontentloaded" });
     await randomDelay(1000, 2000);
+
     // @ts-ignore
     let bodyText = await page.evaluate(() => document.body.innerText);
     let emails = extractEmails(bodyText);
     if (emails.length > 0) return emails[0];
 
-    const contactUrls = ["/contact", "/contact-us", "/about", "/about-us", "/kontakt"];
-    for (const path of contactUrls) {
+    for (const path of ["/contact", "/contact-us", "/about", "/about-us", "/kontakt"]) {
       try {
         await page.goto(`${url}${path}`, { timeout: SCRAPE_TIMEOUT, waitUntil: "domcontentloaded" });
         await randomDelay(800, 1500);
@@ -127,33 +129,33 @@ async function findEmailOnWebsite(page: Page, website: string): Promise<string |
     }
     return null;
   } catch (error) {
-    console.warn(`   ⚠️  Could not scrape website ${website}:`, (error as Error).message);
+    console.warn(`⚠️  Could not scrape website ${website}:`, (error as Error).message);
     return null;
   }
 }
 
 // ─── Google Maps scraper ──────────────────────────────────────────────────────
-async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promise<Omit<ScrapedLead, "email">[]> {
+async function scrapeGoogleMaps(
+  page: Page,
+  query: string,
+  limit: number
+): Promise<Omit<ScrapedLead, "email">[]> {
   const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
-
-  console.log(`   🗺️  Searching Google Maps: "${query}"`);
+  console.log(`🗺️  Searching Google Maps: "${query}"`);
   await page.goto(searchUrl, { timeout: SCRAPE_TIMEOUT, waitUntil: "networkidle" });
   await randomDelay(3000, 5000);
 
-  const consentSelectors = [
-    'button:has-text("Accept all")',       // English
-    'button:has-text("Alle akzeptieren")', // German
-    'button:has-text("Tout accepter")',    // French
-    'button:has-text("Aceptar todo")',     // Spanish
-    'button:has-text("Accetta tutto")',    // Italian
-  ];
-
-  for (const selector of consentSelectors) {
+  for (const selector of [
+    'button:has-text("Accept all")',
+    'button:has-text("Alle akzeptieren")',
+    'button:has-text("Tout accepter")',
+    'button:has-text("Aceptar todo")',
+    'button:has-text("Accetta tutto")',
+  ]) {
     try {
       const btn = page.locator(selector).first();
       if (await btn.isVisible({ timeout: 2000 })) {
         await btn.click();
-        console.log(`   ✅ Consent wall dismissed (${selector})`);
         await randomDelay(800, 1500);
         break;
       }
@@ -162,20 +164,17 @@ async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promi
 
   const results: Omit<ScrapedLead, "email">[] = [];
   const seen = new Set<string>();
-
   const resultsPanel = page.locator('[role="feed"]').first();
 
   for (let attempt = 0; attempt < 6 && results.length < limit; attempt++) {
     await resultsPanel.evaluate((el) => el.scrollBy(0, 700)).catch(() => { });
     await randomDelay(1200, 2500);
-
     await page.mouse.move(600 + Math.random() * 200, 400 + Math.random() * 200);
 
     const cards = await page.locator('[role="feed"] > div').all();
 
     for (const card of cards) {
       if (results.length >= limit) break;
-
       try {
         const nameEl = card.locator("a[aria-label]").first();
         const name = (await nameEl.getAttribute("aria-label"))?.trim();
@@ -184,9 +183,18 @@ async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promi
         await nameEl.click();
         await randomDelay(4000, 6500);
 
-        const website = await page.locator('a[data-item-id="authority"]').getAttribute("href").catch(() => null);
-        const phone = await page.locator('button[data-item-id^="phone"]').textContent().catch(() => null);
-        const address = await page.locator('button[data-item-id="address"]').textContent().catch(() => null);
+        const website = await page
+          .locator('a[data-item-id="authority"]')
+          .getAttribute("href")
+          .catch(() => null);
+        const phone = await page
+          .locator('button[data-item-id^="phone"]')
+          .textContent()
+          .catch(() => null);
+        const address = await page
+          .locator('button[data-item-id="address"]')
+          .textContent()
+          .catch(() => null);
 
         seen.add(name);
         results.push({
@@ -195,43 +203,51 @@ async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promi
           phone: phone?.trim() || undefined,
           address: address?.trim() || undefined,
         });
-
-        console.log(`   📌 Found: ${name} ${website ? `(${website})` : "(no website)"}`);
-      } catch (e) {
+        console.log(`📌 Found: ${name} ${website ? `(${website})` : "(no website)"}`);
+      } catch {
         continue;
       }
     }
   }
-  if (results.length === 0) {
+
+  if (results.length === 0 && !IS_PROD) {
     const timestamp = Date.now();
-    await page.screenshot({
-      path: `/app/debug/maps-${timestamp}.png`,
-      fullPage: true
-    });
-    const html = await page.content();
-    const fs = await import('fs');
-    fs.writeFileSync(`/app/debug/maps-${timestamp}.html`, html);
-    console.log(`   📸 Debug screenshot saved: maps-${timestamp}.png`);
+    const fs = await import("fs");
+    fs.mkdirSync("/app/debug", { recursive: true });
+    await page.screenshot({ path: `/app/debug/maps-${timestamp}.png`, fullPage: true });
+    fs.writeFileSync(`/app/debug/maps-${timestamp}.html`, await page.content());
+    console.log(`📸 Debug artifacts saved: maps-${timestamp}`);
   }
 
   return results;
 }
 
-// ─── Main scrape job ──────────────────────────────────────────────────────────
-export async function runScrapeJob(): Promise<void> {
-  console.log("🔍 Scrape job started...");
+// ─── Core job ─────────────────────────────────────────────────────────────────
 
-  const [querySetting, limitSetting] = await Promise.all([
-    db.query.settings.findFirst({ where: eq(settings.key, "scrape_query") }),
-    db.query.settings.findFirst({ where: eq(settings.key, "scrape_results_per_run") }),
-  ]);
+/**
+ * Runs a scrape job driven by a ScrapeProfile.
+ * All config (query, limit, userId, profileId) comes from the profile —
+ * no more reading from the removed `settings` table.
+ *
+ * Pass `adHocQuery` to override the profile's searchQuery for one-off calls.
+ */
+export async function runScrapeJob(
+  profile: ScrapeProfile,
+  adHocQuery?: string
+): Promise<void> {
+  const query = adHocQuery ?? profile.searchQuery;
+  const limit = profile.resultsPerRun ?? DEFAULT_RESULTS_LIMIT;
 
-  const query = typeof querySetting?.value === "string" ? querySetting.value : "restaurants in Paris";
-  const limit = parseInt(typeof limitSetting?.value === "string" ? limitSetting.value : String(RESULTS_LIMIT));
+  console.log(`🔍 Scrape job — profile: "${profile.name}", query: "${query}", limit: ${limit}`);
 
   const [job] = await db
     .insert(scrapeJobs)
-    .values({ query, status: "running" })
+    .values({
+      userId: profile.userId,
+      scrapeProfileId: profile.id, // ✅ job is now linked to the profile that triggered it
+      query,
+      status: "running",
+    })
     .returning();
 
   let browser: Browser | null = null;
@@ -240,51 +256,50 @@ export async function runScrapeJob(): Promise<void> {
   try {
     browser = await launchBrowser();
     const page = await newStealthPage(browser);
-
     const listings = await scrapeGoogleMaps(page, query, limit);
-    console.log(`   📋 Found ${listings.length} listings, now extracting emails...`);
+    console.log(`📋 Found ${listings.length} listings, extracting emails...`);
 
     for (const listing of listings) {
       const alreadyExists = listing.website
         ? await db.query.leads.findFirst({ where: eq(leads.website, listing.website) })
         : null;
-
       if (alreadyExists) {
-        console.log(`   ⏭️  Skipping ${listing.companyName} — already in DB`);
+        console.log(`⏭️  Skipping ${listing.companyName} — website already in DB`);
         continue;
       }
 
       let email: string | null = null;
       if (listing.website) {
-        console.log(`   🌐 Checking website for email: ${listing.website}`);
+        console.log(`🌐 Checking website for email: ${listing.website}`);
         email = await findEmailOnWebsite(page, listing.website);
       }
 
       if (!email) {
-        console.log(`   ⚠️  No email found for ${listing.companyName} — skipping`);
+        console.log(`⚠️  No email found for ${listing.companyName} — skipping`);
         continue;
       }
 
       const emailExists = await db.query.leads.findFirst({ where: eq(leads.email, email) });
       if (emailExists) {
-        console.log(`   ⏭️  Email ${email} already in DB — skipping`);
+        console.log(`⏭️  Email ${email} already in DB — skipping`);
         continue;
       }
 
       await db.insert(leads).values({
+        userId: profile.userId,      // ✅ leads are owned by the user who ran the profile
         companyName: listing.companyName,
         email,
         website: listing.website,
         phone: listing.phone,
         address: listing.address,
         sourceQuery: query,
+        scrapeProfileId: profile.id, // ✅ direct FK — no join needed to filter by profile
         scrapeJobId: job.id,
         status: "new",
       });
 
       newLeadsCount++;
-      console.log(`   ✅ Saved: ${listing.companyName} <${email}>`);
-
+      console.log(`✅ Saved: ${listing.companyName} <${email}>`);
       await randomDelay(1500, 3000);
     }
 
@@ -293,11 +308,19 @@ export async function runScrapeJob(): Promise<void> {
       .set({ status: "done", leadsFound: newLeadsCount, finishedAt: new Date() })
       .where(eq(scrapeJobs.id, job.id));
 
-    console.log(`✅ Scrape job complete. ${newLeadsCount} new leads saved.\n`);
+    // ✅ Keep resultsCount on the profile in sync
+    await db
+      .update(scrapeProfiles)
+      .set({
+        resultsCount: profile.resultsCount + newLeadsCount,
+        updatedAt: new Date(),
+      })
+      .where(eq(scrapeProfiles.id, profile.id));
+
+    console.log(`✅ Scrape job complete. ${newLeadsCount} new leads saved.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error(`❌ Scrape job failed: ${message}`);
-
     await db
       .update(scrapeJobs)
       .set({ status: "failed", errorMessage: message, finishedAt: new Date() })
@@ -305,4 +328,58 @@ export async function runScrapeJob(): Promise<void> {
   } finally {
     await browser?.close();
   }
+}
+
+// ─── Public API (used by routes) ─────────────────────────────────────────────
+
+export async function listScrapeJobs({ page, limit }: ListJobsInput) {
+  const offset = (page - 1) * limit;
+  const [jobs, [{ total }]] = await Promise.all([
+    db.query.scrapeJobs.findMany({
+      orderBy: desc(scrapeJobs.createdAt),
+      limit,
+      offset,
+      with: { leads: { columns: { id: true } } },
+    }),
+    db.select({ total: count() }).from(scrapeJobs),
+  ]);
+  return { data: jobs, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+}
+
+export async function getScrapeJob(id: number) {
+  const job = await db.query.scrapeJobs.findFirst({
+    where: eq(scrapeJobs.id, id),
+    with: { leads: true },
+  });
+  if (!job) throw Object.assign(new Error("Job not found"), { statusCode: 404 });
+  return job;
+}
+
+/**
+ * Ad-hoc trigger from POST /scraper/trigger.
+ * Uses the user's most recently updated scrape profile as the base config.
+ * If the user passes a query it overrides the profile's stored searchQuery.
+ */
+export async function triggerScrapeJob(userId: number, input: TriggerScrapeInput) {
+  const [profile] = await db
+    .select()
+    .from(scrapeProfiles)
+    .where(eq(scrapeProfiles.userId, userId))
+    .orderBy(desc(scrapeProfiles.updatedAt))
+    .limit(1);
+
+  if (!profile) {
+    throw Object.assign(
+      new Error("No scrape profile found. Create a scrape profile first."),
+      { statusCode: 400 }
+    );
+  }
+
+  runScrapeJob(profile, input.query).catch(console.error);
+
+  return {
+    message: "Scrape job started. Check /scraper/jobs for progress.",
+    profileUsed: profile.name,
+    query: input.query ?? profile.searchQuery,
+  };
 }

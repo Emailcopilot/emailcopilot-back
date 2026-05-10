@@ -33,28 +33,25 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "canceled",
   "past_due",
   "trialing",
-  "pending",   // Mollie: waiting for first payment to clear
-  "suspended", // Mollie: mandate became invalid
+  "pending",
+  "suspended",
 ]);
 
 export const invoiceStatusEnum = pgEnum("invoice_status", ["paid", "pending", "failed"]);
 
-export const integrationProviderEnum = pgEnum("integration_provider", [
-  "google",
-  "microsoft",
-  "sendgrid",
-  "hunter",
-  "apollo",
-  "clearbit",
-  "hubspot",
-  "salesforce",
-  "slack",
-  "webhook",
-]);
-
 export const themeEnum = pgEnum("theme", ["light", "dark", "system"]);
 
-export const leadStatusEnum = pgEnum("lead_status", ["new", "queued", "sent", "failed", "unsubscribed"]);
+// ✅ Added "replied" and "disqualified" — were used in lead.service but missing from the enum
+export const leadStatusEnum = pgEnum("lead_status", [
+  "new",
+  "queued",
+  "sent",
+  "failed",
+  "replied",
+  "disqualified",
+  "unsubscribed",
+]);
+
 export const emailLogStatusEnum = pgEnum("email_log_status", ["sent", "failed", "opened", "replied"]);
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -74,18 +71,6 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Settings ─────────────────────────────────────────────────────────────────
-
-export const settings = pgTable("settings", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  key: varchar("key", { length: 100 }).notNull(),
-  value: text("value"),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 // ─── Email Profiles ───────────────────────────────────────────────────────────
 
 export const emailProfiles = pgTable("email_profiles", {
@@ -95,11 +80,11 @@ export const emailProfiles = pgTable("email_profiles", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 100 }).notNull(),
   email: varchar("email", { length: 255 }).notNull(),
-  provider: emailProviderEnum("provider").notNull().default("gmail"),
+  provider: emailProviderEnum("provider").notNull().default("smtp"),
   smtpHost: varchar("smtp_host", { length: 255 }),
   smtpPort: integer("smtp_port").default(587),
-  username: varchar("username", { length: 255 }),
-  passwordEncrypted: text("password_encrypted"),
+  smtpUser: varchar("smtp_user", { length: 255 }),
+  smtpPass: text("smtp_pass"), // store encrypted in practice
   status: emailProfileStatusEnum("status").notNull().default("inactive"),
   dailyLimit: integer("daily_limit").notNull().default(100),
   sentToday: integer("sent_today").notNull().default(0),
@@ -126,12 +111,37 @@ export const emailTemplates = pgTable("email_templates", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ─── Scrape Profiles ──────────────────────────────────────────────────────────
+// User-facing config: what to search, how many results, on what schedule.
+// Each execution creates one scrapeJob row.
+
+export const scrapeProfiles = pgTable("scrape_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  // ✅ Widened from 100 → 500: real search queries ("plumbers in Amsterdam near city centre") easily exceed 100 chars
+  searchQuery: varchar("search_query", { length: 500 }).notNull(),
+  resultsPerRun: integer("results_per_run").notNull().default(100),
+  schedule: varchar("schedule", { length: 100 }), // cron expression
+  status: scrapeStatusEnum("status").notNull().default("idle"),
+  resultsCount: integer("results_count").notNull().default(0),
+  lastRun: timestamp("last_run"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ─── Scrape Jobs ──────────────────────────────────────────────────────────────
+// One row per execution. Links back to the profile that triggered it.
 
 export const scrapeJobs = pgTable("scrape_jobs", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .references(() => users.id, { onDelete: "set null" }),
+  // ✅ Added: which profile triggered this job (null for ad-hoc calls)
+  scrapeProfileId: integer("scrape_profile_id")
+    .references(() => scrapeProfiles.id, { onDelete: "set null" }),
   query: text("query").notNull(),
   status: scrapeJobStatusEnum("status").notNull().default("running"),
   leadsFound: integer("leads_found").notNull().default(0),
@@ -152,11 +162,17 @@ export const leads = pgTable("leads", {
   phone: varchar("phone", { length: 50 }),
   address: text("address"),
   sourceQuery: text("source_query"),
+  // ✅ Added: direct link to the profile that found this lead (scrapeJobId alone wasn't enough
+  //    because you'd need a join to go lead → job → profile)
+  scrapeProfileId: integer("scrape_profile_id")
+    .references(() => scrapeProfiles.id, { onDelete: "set null" }),
   scrapeJobId: integer("scrape_job_id")
     .references(() => scrapeJobs.id, { onDelete: "set null" }),
   scrapedAt: timestamp("scraped_at").notNull().defaultNow(),
   status: leadStatusEnum("status").notNull().default("new"),
+  notes: text("notes"),                // ✅ Added: used by patchLead
   emailedAt: timestamp("emailed_at"),
+  repliedAt: timestamp("replied_at"),  // ✅ Added: used by patchLead
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -177,24 +193,6 @@ export const emailLogs = pgTable("email_logs", {
   status: emailLogStatusEnum("status").notNull(),
   errorMessage: text("error_message"),
   sentAt: timestamp("sent_at").notNull().defaultNow(),
-});
-
-// ─── Scrape Profiles ──────────────────────────────────────────────────────────
-
-export const scrapeProfiles = pgTable("scrape_profiles", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: varchar("name", { length: 100 }).notNull(),
-  searchQuery: varchar("search_query", { length: 100 }).notNull(),
-  resultsPerRun: integer("results_per_run").notNull().default(100),
-  schedule: varchar("schedule", { length: 100 }),
-  status: scrapeStatusEnum("status").notNull().default("idle"),
-  resultsCount: integer("results_count").notNull().default(0),
-  lastRun: timestamp("last_run"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // ─── Scrape Results ───────────────────────────────────────────────────────────
@@ -235,28 +233,7 @@ export const copilots = pgTable("copilots", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Integrations ─────────────────────────────────────────────────────────────
-
-export const integrations = pgTable("integrations", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  provider: integrationProviderEnum("provider").notNull(),
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  apiKey: text("api_key"),
-  expiresAt: timestamp("expires_at"),
-  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
-  connectedAt: timestamp("connected_at").notNull().defaultNow(),
-});
-
 // ─── Billing / Subscriptions ──────────────────────────────────────────────────
-// Mollie flow:
-//   1. POST /billing/subscribe  → create Mollie customer + first payment (checkout URL returned)
-//   2. Mollie redirects back    → GET  /billing/subscribe/return?planId=&userId=
-//   3. Mollie fires webhook     → POST /billing/webhook  (payment status updates)
-//   4. On paid first payment    → create Mollie subscription (recurring)
 
 export const subscriptions = pgTable("subscriptions", {
   id: serial("id").primaryKey(),
@@ -265,13 +242,9 @@ export const subscriptions = pgTable("subscriptions", {
     .references(() => users.id, { onDelete: "cascade" }),
   planId: varchar("plan_id", { length: 50 }).notNull(),
   status: subscriptionStatusEnum("status").notNull().default("pending"),
-
-  // ── Mollie IDs (replaced Stripe) ──────────────────────────────────────────
   mollieCustomerId: varchar("mollie_customer_id", { length: 255 }),
   mollieSubscriptionId: varchar("mollie_subscription_id", { length: 255 }),
-  // The mandate created after the first payment succeeds
   mollieMandateId: varchar("mollie_mandate_id", { length: 255 }),
-
   currentPeriodStart: timestamp("current_period_start"),
   currentPeriodEnd: timestamp("current_period_end"),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
@@ -287,12 +260,11 @@ export const invoices = pgTable("invoices", {
   subscriptionId: integer("subscription_id").references(() => subscriptions.id, {
     onDelete: "set null",
   }),
-  // ── Mollie payment ID (replaced Stripe invoice ID) ────────────────────────
   molliePaymentId: varchar("mollie_payment_id", { length: 255 }),
-  amount: integer("amount").notNull(),   // stored in cents
+  amount: integer("amount").notNull(),
   currency: varchar("currency", { length: 10 }).notNull().default("eur"),
   status: invoiceStatusEnum("status").notNull().default("pending"),
-  downloadUrl: text("download_url"),     // Mollie hosted payment page / receipt
+  downloadUrl: text("download_url"),
   paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -304,7 +276,6 @@ export const usage = pgTable("usage", {
   periodStart: timestamp("period_start").notNull(),
   periodEnd: timestamp("period_end").notNull(),
   emailsSent: integer("emails_sent").notNull().default(0),
-  // room to grow:
   copilotsCreated: integer("copilots_created").notNull().default(0),
   emailProfilesCreated: integer("email_profiles_created").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -315,14 +286,14 @@ export const usage = pgTable("usage", {
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
-export type Settings = typeof settings.$inferSelect;
-export type NewSettings = typeof settings.$inferInsert;
-
 export type EmailProfile = typeof emailProfiles.$inferSelect;
 export type NewEmailProfile = typeof emailProfiles.$inferInsert;
 
 export type EmailTemplate = typeof emailTemplates.$inferSelect;
 export type NewEmailTemplate = typeof emailTemplates.$inferInsert;
+
+export type ScrapeProfile = typeof scrapeProfiles.$inferSelect;
+export type NewScrapeProfile = typeof scrapeProfiles.$inferInsert;
 
 export type ScrapeJob = typeof scrapeJobs.$inferSelect;
 export type NewScrapeJob = typeof scrapeJobs.$inferInsert;
@@ -333,17 +304,11 @@ export type NewLead = typeof leads.$inferInsert;
 export type EmailLog = typeof emailLogs.$inferSelect;
 export type NewEmailLog = typeof emailLogs.$inferInsert;
 
-export type ScrapeProfile = typeof scrapeProfiles.$inferSelect;
-export type NewScrapeProfile = typeof scrapeProfiles.$inferInsert;
-
 export type ScrapeResult = typeof scrapeResults.$inferSelect;
 export type NewScrapeResult = typeof scrapeResults.$inferInsert;
 
 export type Copilot = typeof copilots.$inferSelect;
 export type NewCopilot = typeof copilots.$inferInsert;
-
-export type Integration = typeof integrations.$inferSelect;
-export type NewIntegration = typeof integrations.$inferInsert;
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;

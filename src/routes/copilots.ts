@@ -1,127 +1,78 @@
-import { Router, Request, Response } from "express";
-import { db } from "../db/drizzle";
+import { Router, Request, Response, NextFunction } from "express";
+import { validate } from "../middleware/validate.middleware";
 import {
-    emailProfiles,
-    scrapeProfiles,
-    emailTemplates,
-    copilots,
-    integrations,
-    settings,
-    subscriptions,
-    invoices,
-    leads,
-    scrapeJobs,
-} from "../db/schema";
-import { and, desc, eq } from "drizzle-orm";
-import { runDailySendJob, testSmtpConnection } from "../services/mailer";
-import { runScrapeJob } from "../services/scraper";
-import { incrementUsage } from "../lib/helpers";
+    createCopilotSchema,
+    updateCopilotSchema,
+    updateCopilotStatusSchema,
+} from "../validators/copilot.validator";
+import * as copilotService from "../services/copilot.service";
 
 export const copilotsRouter: Router = Router();
 
-
-// ─── Copilots ─────────────────────────────────────────────────────────────────
-// GET    /api/copilots
-// GET    /api/copilots/:id
-// POST   /api/copilots
-// PUT    /api/copilots/:id
-// DELETE /api/copilots/:id
-// PATCH  /api/copilots/:id/status
-
-copilotsRouter.get("/", async (req: Request, res: Response) => {
+// GET /api/copilots
+copilotsRouter.get("/", async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const user = req.dbUser;
-        const rows = await db.select().from(copilots).where(eq(copilots.userId, user.id));
+        const rows = await copilotService.listCopilots(req.dbUser.id);
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: "Failed to fetch copilots" });
-    }
+    } catch (err) { next(err); }
 });
 
-copilotsRouter.get("/:id", async (req: Request, res: Response) => {
+// GET /api/copilots/:id
+copilotsRouter.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const id = Number(req.params.id);
-        const user = req.dbUser;
-        const [row] = await db.select().from(copilots).where(and(eq(copilots.id, id), eq(copilots.userId, user.id)));
-        if (!row) return res.status(404).json({ error: "Copilot not found" });
+        const row = await copilotService.getCopilot(Number(req.params.id), req.dbUser.id);
         res.json(row);
-    } catch (err) {
-        res.status(500).json({ error: "Failed to fetch copilot" });
-    }
+    } catch (err) { next(err); }
 });
 
-copilotsRouter.post("/", async (req: Request, res: Response) => {
-    try {
-        const user = req.dbUser;
-        const subs = await db.select().from(subscriptions).where(eq(subscriptions.userId, user.id)).orderBy(desc(subscriptions.createdAt));
-        const sub = subs[0];
-        if (!sub) return res.status(404).json({ error: "No subscription found" });
-        const [created] = await db.insert(copilots).values({ ...req.body, userId: user.id }).returning();
-        await incrementUsage(user.id, sub.id, { copilotsCreated: 1 });
-        res.status(201).json(created);
-    } catch (err) {
-        console.error("Error creating copilot:", err);
-        res.status(500).json({ error: "Failed to create copilot" });
+// POST /api/copilots
+copilotsRouter.post(
+    "/",
+    validate(createCopilotSchema),
+    async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const created = await copilotService.createCopilot(req.dbUser.id, req.body);
+            res.status(201).json(created);
+        } catch (err) { next(err); }
     }
-});
+);
 
-copilotsRouter.put("/:id", async (req: Request, res: Response) => {
-    try {
-        const user = req.dbUser;
-        const id = Number(req.params.id);
-        const [updated] = await db
-            .update(copilots)
-            .set({ ...req.body, updatedAt: new Date() })
-            .where(and(eq(copilots.id, id), eq(copilots.userId, user.id)))
-            .returning();
-        if (!updated) return res.status(404).json({ error: "Copilot not found" });
-        res.json(updated);
-    } catch (err) {
-        console.error("Error updating copilot:", err);
-        res.status(500).json({ error: "Failed to update copilot" });
-    }
-});
-
-copilotsRouter.delete("/:id", async (req: Request, res: Response) => {
-    try {
-        const id = Number(req.params.id);
-        const user = req.dbUser;
-        await db.delete(copilots).where(and(eq(copilots.id, id), eq(copilots.userId, user.id)));
-        res.status(204).send();
-    } catch (err) {
-        console.error("Error deleting copilot:", err);
-        res.status(500).json({ error: "Failed to delete copilot" });
-    }
-});
-
-// PATCH /api/copilots/:id/status — matches copilotsApi.updateStatus() in api.ts
-copilotsRouter.patch("/:id/status", async (req: Request, res: Response) => {
-    try {
-        const id = Number(req.params.id);
-        const user = req.dbUser;
-        const subs = await db.select().from(subscriptions).where(eq(subscriptions.userId, user.id)).orderBy(desc(subscriptions.createdAt));
-        const sub = subs[0];
-        if (!sub) return res.status(404).json({ error: "No subscription found" });
-        const { status } = req.body as {
-            status: "draft" | "active" | "paused" | "archived";
-        };
-        const [updated] = await db
-            .update(copilots)
-            .set({ status, updatedAt: new Date() })
-            .where(and(eq(copilots.id, id), eq(copilots.userId, user.id)))
-            .returning();
-        if (!updated) return res.status(404).json({ error: "Copilot not found" });
-
-        // When a copilot is activated, trigger the daily send job
-        if (status === "active") {
-            runDailySendJob(user.id, sub.id).catch((err) =>
-                console.error("Daily send job error:", err)
+// PUT /api/copilots/:id
+copilotsRouter.put(
+    "/:id",
+    validate(updateCopilotSchema),
+    async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const updated = await copilotService.updateCopilot(
+                Number(req.params.id),
+                req.dbUser.id,
+                req.body
             );
-        }
-
-        res.json(updated);
-    } catch (err) {
-        console.error("Error updating copilot status:", err);
-        res.status(500).json({ error: "Failed to update copilot status" });
+            res.json(updated);
+        } catch (err) { next(err); }
     }
+);
+
+// DELETE /api/copilots/:id
+copilotsRouter.delete("/:id", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        await copilotService.deleteCopilot(Number(req.params.id), req.dbUser.id);
+        res.status(204).send();
+    } catch (err) { next(err); }
 });
+
+// PATCH /api/copilots/:id/status
+copilotsRouter.patch(
+    "/:id/status",
+    validate(updateCopilotStatusSchema),
+    async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const updated = await copilotService.updateCopilotStatus(
+                Number(req.params.id),
+                req.dbUser.id,
+                req.body
+            );
+            res.json(updated);
+        } catch (err) { next(err); }
+    }
+);

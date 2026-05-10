@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db/drizzle";
 import {
+    emailTemplates,
     users
 } from "../db/schema";
 import { eq } from "drizzle-orm";
@@ -62,6 +63,15 @@ usersRouter.post("/", async (req: Request, res: Response) => {
             return res.status(400).json({ error: "User already exists" });
         }
         const [created] = await db.insert(users).values(req.body).returning();
+        await db.insert(emailTemplates).values({
+            userId: created.id,
+            name: "Default Outreach Template",
+            subject: "Quick question about {{companyName}}",
+            body: `Hi,\n\nI came across {{companyName}} and wanted to reach out...\n\nBest,\n{{senderName}}`,
+            category: "Cold Outreach",
+            isActive: true,
+            variables: ["companyName", "senderName"],
+        });
         res.status(201).json(created);
     } catch (err) {
         console.error("Error creating user:", err);

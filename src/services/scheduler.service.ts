@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { settings, subscriptions } from "../db/schema";
+import { subscriptions, scrapeProfiles } from "../db/schema";
 import { desc, eq } from "drizzle-orm";
 import { runDailySendJob } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
@@ -19,14 +19,11 @@ const state: SchedulerState = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-async function getSetting(key: string, fallback: string): Promise<string> {
-  const row = await db.query.settings.findFirst({ where: eq(settings.key, key) });
-  return (row?.value as string) ?? fallback;
-}
 
 /**
- * Resolves the active subscription at the moment the job fires.
- * This avoids baking a stale subscriptionId into the closure at init time.
+ * Resolves the user's active subscription at job fire time.
+ * Intentionally NOT cached at init — avoids a stale subscriptionId if the user
+ * upgrades or changes plan between scheduler restarts.
  */
 async function getActiveSubscription(userId: number) {
   const subs = await db
@@ -39,6 +36,35 @@ async function getActiveSubscription(userId: number) {
   return sub;
 }
 
+/**
+ * Loads all scrape profiles for the user and runs each one sequentially.
+ * Sequential rather than parallel to avoid spinning up multiple browsers
+ * simultaneously against Google Maps.
+ */
+async function runAllScrapeProfiles(userId: number): Promise<void> {
+  const profiles = await db
+    .select()
+    .from(scrapeProfiles)
+    .where(eq(scrapeProfiles.userId, userId));
+
+  if (profiles.length === 0) {
+    console.log(`📭 No scrape profiles found for user ${userId} — skipping`);
+    return;
+  }
+
+  console.log(`🔍 Running ${profiles.length} scrape profile(s) for user ${userId}`);
+
+  for (const profile of profiles) {
+    try {
+      console.log(`   ▶ Profile "${profile.name}" (query: "${profile.searchQuery}")`);
+      await runScrapeJob(profile);
+    } catch (err) {
+      // One failing profile must not abort the rest
+      console.error(`   ❌ Profile "${profile.name}" failed:`, err);
+    }
+  }
+}
+
 function stopAll() {
   state.sendJob?.stop();
   state.scrapeJobAM?.stop();
@@ -48,18 +74,30 @@ function stopAll() {
   state.scrapeJobPM = null;
 }
 
+function atHour(hour: string): string {
+  return `0 ${hour} * * *`;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Initialises cron jobs for a user.
+ *
+ * Schedules are currently hardcoded defaults. Replace the constants with a
+ * per-user DB lookup once you have a user-preferences table.
+ *
+ * Send:   09:00 daily
+ * Scrape: 08:00 and 14:00 daily
+ */
 export async function initScheduler(userId: number): Promise<void> {
-  console.log("⏰ Initialising scheduler...");
+  console.log(`⏰ Initialising scheduler for user ${userId}...`);
   stopAll();
 
-  const sendHour = await getSetting("send_hour", "9");
-  const scrapeHours = await getSetting("scrape_hours", "8,14");
-  const [amHour, pmHour] = scrapeHours.split(",").map((h) => h.trim());
+  // ── Send job ────────────────────────────────────────────────────────────────
+  const SEND_HOUR = "9";
 
-  // ✅ FIX: Resolve subscription at fire time, not at init time
-  state.sendJob = cron.schedule(`0 ${sendHour} * * *`, async () => {
-    console.log(`\n📧 [${new Date().toISOString()}] Send job triggered`);
+  state.sendJob = cron.schedule(atHour(SEND_HOUR), async () => {
+    console.log(`\n📧 [${new Date().toISOString()}] Send job triggered for user ${userId}`);
     try {
       const sub = await getActiveSubscription(userId);
       await runDailySendJob(userId, sub.id);
@@ -67,29 +105,33 @@ export async function initScheduler(userId: number): Promise<void> {
       console.error("❌ Send job error:", e);
     }
   });
-  console.log(`   ✅ Send job at ${sendHour}:00 daily`);
+  console.log(`   ✅ Send job at ${SEND_HOUR}:00 daily`);
 
-  if (amHour) {
-    state.scrapeJobAM = cron.schedule(`0 ${amHour} * * *`, async () => {
-      console.log(`\n🔍 AM scrape triggered`);
-      await runScrapeJob().catch((e) => console.error("❌ AM scrape error:", e));
-    });
-    console.log(`   ✅ AM scrape at ${amHour}:00 daily`);
-  }
+  // ── Scrape jobs ─────────────────────────────────────────────────────────────
+  const AM_HOUR = "8";
+  const PM_HOUR = "14";
 
-  if (pmHour) {
-    state.scrapeJobPM = cron.schedule(`0 ${pmHour} * * *`, async () => {
-      console.log(`\n🔍 PM scrape triggered`);
-      await runScrapeJob().catch((e) => console.error("❌ PM scrape error:", e));
-    });
-    console.log(`   ✅ PM scrape at ${pmHour}:00 daily`);
-  }
+  state.scrapeJobAM = cron.schedule(atHour(AM_HOUR), async () => {
+    console.log(`\n🔍 [${new Date().toISOString()}] AM scrape triggered for user ${userId}`);
+    await runAllScrapeProfiles(userId).catch((e) =>
+      console.error("❌ AM scrape error:", e)
+    );
+  });
+  console.log(`   ✅ AM scrape at ${AM_HOUR}:00 daily`);
+
+  state.scrapeJobPM = cron.schedule(atHour(PM_HOUR), async () => {
+    console.log(`\n🔍 [${new Date().toISOString()}] PM scrape triggered for user ${userId}`);
+    await runAllScrapeProfiles(userId).catch((e) =>
+      console.error("❌ PM scrape error:", e)
+    );
+  });
+  console.log(`   ✅ PM scrape at ${PM_HOUR}:00 daily`);
 
   console.log("⏰ Scheduler ready.\n");
 }
 
 export async function restartScheduler(userId: number): Promise<void> {
-  console.log("🔄 Restarting scheduler...");
+  console.log(`🔄 Restarting scheduler for user ${userId}...`);
   await initScheduler(userId);
 }
 

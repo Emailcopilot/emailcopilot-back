@@ -9,6 +9,20 @@ import { getAuth } from "@clerk/express";
 
 export const usersRouter: Router = Router();
 
+async function resolveUser(req: Request, res: Response): Promise<typeof users.$inferSelect | null> {
+    const { userId: clerkId } = getAuth(req);
+    if (!clerkId) {
+        res.status(401).json({ error: "Unauthorized" });
+        return null;
+    }
+    const user = await db.select().from(users).where(eq(users.clerkId, clerkId)).then((r) => r[0]);
+    if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return null;
+    }
+    return user;
+}
+
 
 // ─── Users ─────────────────────────────────────────────
 // GET    /api/users
@@ -17,16 +31,10 @@ export const usersRouter: Router = Router();
 // PUT    /api/users/:id
 // DELETE /api/users/:id
 
-usersRouter.get("/", async (_req: Request, res: Response) => {
+usersRouter.get("/", async (req: Request, res: Response) => {
     try {
-        const { userId } = getAuth(_req)
-
-        console.log("requireApiKey middleware - auth object:", userId);
-        if (!userId) {
-            console.warn("Unauthorized access attempt without user ID");
-            res.status(401).json({ error: "Unauthorized: No user ID in auth object" });
-            return;
-        }
+        const user = await resolveUser(req, res);
+        if (!user) return;
 
         const rows = await db.select().from(users);
         res.json(rows);
@@ -38,14 +46,8 @@ usersRouter.get("/", async (_req: Request, res: Response) => {
 
 usersRouter.get("/:id", async (req: Request, res: Response) => {
     try {
-        const { userId } = getAuth(req)
-
-        console.log("requireApiKey middleware - auth object:", userId);
-        if (!userId) {
-            console.warn("Unauthorized access attempt without user ID");
-            res.status(401).json({ error: "Unauthorized: No user ID in auth object" });
-            return;
-        }
+        const user = await resolveUser(req, res);
+        if (!user) return;
 
         const [row] = await db.select().from(users).where(eq(users.clerkId, req.params.id));
         if (!row) return res.status(404).json({ error: "User not found" });
@@ -81,14 +83,8 @@ usersRouter.post("/", async (req: Request, res: Response) => {
 
 usersRouter.put("/:id", async (req: Request, res: Response) => {
     try {
-        const { userId } = getAuth(req)
-
-        console.log("requireApiKey middleware - auth object:", userId);
-        if (!userId) {
-            console.warn("Unauthorized access attempt without user ID");
-            res.status(401).json({ error: "Unauthorized: No user ID in auth object" });
-            return;
-        }
+        const user = await resolveUser(req, res);
+        if (!user) return;
 
         const [updated] = await db.update(users).set(req.body).where(eq(users.clerkId, req.params.id)).returning();
         if (!updated) return res.status(404).json({ error: "User not found" });
@@ -102,6 +98,9 @@ usersRouter.put("/:id", async (req: Request, res: Response) => {
 
 usersRouter.delete("/:id", async (req: Request, res: Response) => {
     try {
+        const user = await resolveUser(req, res);
+        if (!user) return;
+
         const [deleted] = await db.delete(users).where(eq(users.clerkId, req.params.id)).returning();
         if (!deleted) return res.status(404).json({ error: "User not found" });
         res.json(deleted);

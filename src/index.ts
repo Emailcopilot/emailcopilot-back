@@ -59,6 +59,7 @@ app.use("/billing", billingRouter);
 
 // ─── Authenticated routes ────────────────────────────────────────────────────
 // requireAuth resolves the Clerk session to req.dbUser for all routes below
+app.use("/users", usersRouter);
 
 app.use(requireAuth);
 
@@ -70,7 +71,6 @@ app.use("/copilots", copilotsRouter);
 app.use("/scrape-jobs", scrapeJobsRouter);
 app.use("/email-profiles", emailProfilesRouter);
 app.use("/scrape-profiles", scrapeProfilesRouter);
-app.use("/users", usersRouter);
 
 // ─── Utility endpoints ────────────────────────────────────────────────────────
 

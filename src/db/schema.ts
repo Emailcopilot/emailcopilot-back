@@ -78,12 +78,12 @@ export const emailProfiles = pgTable("email_profiles", {
   userId: integer("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  name: varchar("name", { length: 100 }).notNull(),
+  profileName: varchar("profile_name", { length: 100 }).notNull(),
   email: varchar("email", { length: 255 }).notNull(),
+  sendName: varchar("send_name", { length: 100 }),
   provider: emailProviderEnum("provider").notNull().default("smtp"),
   smtpHost: varchar("smtp_host", { length: 255 }),
   smtpPort: integer("smtp_port").default(587),
-  smtpUser: varchar("smtp_user", { length: 255 }),
   smtpPass: text("smtp_pass"), // store encrypted in practice
   status: emailProfileStatusEnum("status").notNull().default("inactive"),
   dailyLimit: integer("daily_limit").notNull().default(100),

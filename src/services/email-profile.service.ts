@@ -77,8 +77,9 @@ export async function verifyEmailProfile(id: number, userId: number): Promise<Se
   const result = await testSmtpConnection({
     host: profile.smtpHost,
     port: profile.smtpPort ?? 587,
-    user: profile.email,
+    email: profile.email,
     pass: profile.smtpPass,
+    sendName: profile.sendName ?? profile.email,
   });
 
   if (result.success) {

@@ -9,9 +9,9 @@ import { incrementUsage } from "../lib/helpers";
 interface SmtpConfig {
   host: string;
   port: number;
-  user: string;
+  email: string;
   pass: string;
-  fromName?: string;
+  sendName: string;
 }
 
 export interface SendResult {
@@ -30,7 +30,7 @@ async function getGlobalSmtpConfig(): Promise<SmtpConfig> {
     where: eq(emailProfiles.status, "active"),
   });
 
-  if (!profile || !profile.smtpHost || !profile.smtpUser || !profile.smtpPass) {
+  if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw new Error(
       "No active email profile configured. Please set up an active SMTP email profile."
     );
@@ -39,18 +39,36 @@ async function getGlobalSmtpConfig(): Promise<SmtpConfig> {
   return {
     host: profile.smtpHost,
     port: profile.smtpPort ?? 587,
-    user: profile.smtpUser,
+    email: profile.email,
     pass: profile.smtpPass,
-    fromName: profile.email,
+    sendName: profile.sendName ?? profile.email, // Fallback to email if sendName is not set
   };
 }
 
+/**
+ * Creates a Nodemailer transporter instance configured with SMTP settings.
+ * 
+ * @param config - SMTP configuration object containing connection details
+ * @param config.host - The SMTP server hostname
+ * @param config.port - The SMTP server port number
+ * @param config.email - The SMTP authentication email (typically an email address)
+ * @param config.pass - The SMTP authentication password
+ * @returns A configured Transporter instance ready to send emails
+ * 
+ * @example
+ * const transporter = createTransporter({
+ *   host: 'smtp.gmail.com',
+ *   port: 587,
+ *   email: 'your-email@gmail.com',
+ *   pass: 'your-app-password'
+ * });
+ */
 function createTransporter(config: SmtpConfig) {
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
     secure: config.port === 465,
-    auth: { user: config.user, pass: config.pass },
+    auth: { user: config.email, pass: config.pass },
   });
 }
 
@@ -76,7 +94,7 @@ async function sendEmail(
     const body = interpolate(template.body ?? "", lead);
 
     await transporter.sendMail({
-      from: `"${config.fromName}" <${config.user}>`,
+      from: `"${config.sendName}" <${config.email}>`,
       to: lead.email as string,
       subject,
       text: body,

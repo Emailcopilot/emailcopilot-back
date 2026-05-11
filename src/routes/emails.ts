@@ -1,10 +1,5 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { validate } from "../middleware/validate.middleware";
-import {
-  createTemplateSchema,
-  patchTemplateSchema,
-} from "../validators/template.validator";
-import * as templateService from "../services/template.service";
 import { db } from "../db/drizzle";
 import { emailLogs } from "../db/schema";
 import { desc } from "drizzle-orm";
@@ -46,42 +41,3 @@ emailsRouter.get(
     } catch (err) { next(err); }
   }
 );
-
-// GET /emails/templates
-emailsRouter.get("/templates", async (_req: Request, res: Response, next: NextFunction) => {
-  try {
-    res.json(await templateService.listTemplates());
-  } catch (err) { next(err); }
-});
-
-// POST /emails/templates
-emailsRouter.post(
-  "/templates",
-  validate(createTemplateSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const created = await templateService.createTemplate(req.dbUser.id, req.body);
-      res.status(201).json(created);
-    } catch (err) { next(err); }
-  }
-);
-
-// PATCH /emails/templates/:id
-emailsRouter.patch(
-  "/templates/:id",
-  validate(patchTemplateSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const updated = await templateService.patchTemplate(Number(req.params.id), req.body);
-      res.json(updated);
-    } catch (err) { next(err); }
-  }
-);
-
-// DELETE /emails/templates/:id
-emailsRouter.delete("/templates/:id", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    await templateService.deleteTemplate(Number(req.params.id));
-    res.json({ success: true });
-  } catch (err) { next(err); }
-});

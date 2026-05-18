@@ -2,7 +2,7 @@ import { chromium as playwrightChromium } from "playwright-extra";
 import stealth from "puppeteer-extra-plugin-stealth";
 import { Browser, Page } from "playwright";
 import { leads, scrapeJobs, scrapeProfiles } from "../db/schema";
-import { eq, desc, count } from "drizzle-orm";
+import { eq, desc, count, and } from "drizzle-orm";
 import { db } from "../db/drizzle";
 import type { ScrapeProfile, ScrapeJob } from "../db/schema";
 import type { ListJobsInput } from "../validators/scraper.validator";
@@ -30,7 +30,8 @@ playwrightChromium.use(stealth());
 // ─── Browser helpers ──────────────────────────────────────────────────────────
 async function launchBrowser(): Promise<Browser> {
   return playwrightChromium.launch({
-    headless: true,
+    // headless trur in prod, false in dev for debugging (shows the browser)
+    headless: IS_PROD,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -48,10 +49,7 @@ async function newStealthPage(browser: Browser): Promise<Page> {
   const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-    viewport: {
-      width: 1280 + Math.floor(Math.random() * 200),
-      height: 800 + Math.floor(Math.random() * 150),
-    },
+    viewport: { width: 1366, height: 768 },
     locale: "en-US",
     timezoneId: "America/New_York",
     screen: { width: 1920, height: 1080 },
@@ -65,6 +63,9 @@ async function newStealthPage(browser: Browser): Promise<Page> {
   });
 
   const page = await context.newPage();
+
+  await page.setDefaultNavigationTimeout(60000);
+  await page.setDefaultTimeout(30000);
 
   await page.route("**/*", (route) => {
     if (["font", "media"].includes(route.request().resourceType())) {
@@ -138,7 +139,8 @@ async function findEmailOnWebsite(page: Page, website: string): Promise<string |
 async function scrapeGoogleMaps(
   page: Page,
   query: string,
-  limit: number
+  limit: number,
+  userId: number
 ): Promise<Omit<ScrapedLead, "email">[]> {
   const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
   console.log(`🗺️  Searching Google Maps: "${query}", Limit: ${limit}`);
@@ -166,10 +168,15 @@ async function scrapeGoogleMaps(
   const seen = new Set<string>();
   const resultsPanel = page.locator('[role="feed"]').first();
 
-  for (let attempt = 0; attempt < 6 && results.length < limit; attempt++) {
-    await resultsPanel.evaluate((el) => el.scrollBy(0, 700)).catch(() => { });
-    await randomDelay(1200, 2500);
-    await page.mouse.move(600 + Math.random() * 200, 400 + Math.random() * 200);
+  for (let attempt = 0; attempt < 10 && results.length < limit; attempt++) {
+    await resultsPanel.evaluate((el) => el.scrollBy(0, 900)).catch(() => { });
+    await randomDelay(1800, 3200);
+
+    if (Math.random() > 0.6) {
+      await page.mouse
+        .move(500 + Math.random() * 300, 300 + Math.random() * 400, { steps: 10 })
+        .catch(() => {});
+    }
 
     const cards = await page.locator('[role="feed"] > div').all();
 
@@ -180,8 +187,16 @@ async function scrapeGoogleMaps(
         const name = (await nameEl.getAttribute("aria-label"))?.trim();
         if (!name || seen.has(name)) continue;
 
+        const alreadyExists = await db.query.leads.findFirst({
+          where: and(eq(leads.companyName, name), eq(leads.userId, userId)),
+        });
+        if (alreadyExists) {
+          console.log(`⏭️ Skipped (already exists): ${name}`);
+          continue;
+        }
+
         await nameEl.click();
-        await randomDelay(4000, 6500);
+        await randomDelay(4500, 7000);
 
         const website = await page
           .locator('a[data-item-id="authority"]')
@@ -257,12 +272,12 @@ export async function runScrapeJob(
   try {
     browser = await launchBrowser();
     const page = await newStealthPage(browser);
-    const listings = await scrapeGoogleMaps(page, query, limit);
+    const listings = await scrapeGoogleMaps(page, query, limit, profile.userId);
     console.log(`📋 Found ${listings.length} listings, extracting emails...`);
 
     for (const listing of listings) {
       const alreadyExists = listing.website
-        ? await db.query.leads.findFirst({ where: eq(leads.website, listing.website) })
+        ? await db.query.leads.findFirst({ where: and(eq(leads.website, listing.website), eq(leads.userId, profile.userId)) })
         : null;
       if (alreadyExists) {
         console.log(`⏭️  Skipping ${listing.companyName} — website already in DB`);

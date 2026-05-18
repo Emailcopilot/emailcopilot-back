@@ -189,8 +189,8 @@ async function sendEmail(
   }
 }
 
-// ─── Daily send job ───────────────────────────────────────────────────────────
-export async function runDailySendJob(copilotId: number): Promise<void> {
+// ─── Send pending leads ───────────────────────────────────────────────────────
+export async function sendPendingLeads(copilotId: number): Promise<void> {
   console.log("📧 Daily send job started...");
 
   let template: EmailTemplate;

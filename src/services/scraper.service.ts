@@ -5,7 +5,7 @@ import { leads, scrapeJobs, scrapeProfiles } from "../db/schema";
 import { eq, desc, count } from "drizzle-orm";
 import { db } from "../db/drizzle";
 import type { ScrapeProfile, ScrapeJob } from "../db/schema";
-import type { TriggerScrapeInput, ListJobsInput } from "../validators/scraper.validator";
+import type { ListJobsInput } from "../validators/scraper.validator";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScrapedLead {
@@ -141,7 +141,7 @@ async function scrapeGoogleMaps(
   limit: number
 ): Promise<Omit<ScrapedLead, "email">[]> {
   const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
-  console.log(`🗺️  Searching Google Maps: "${query}"`);
+  console.log(`🗺️  Searching Google Maps: "${query}", Limit: ${limit}`);
   await page.goto(searchUrl, { timeout: SCRAPE_TIMEOUT, waitUntil: "networkidle" });
   await randomDelay(3000, 5000);
 
@@ -358,31 +358,4 @@ export async function getScrapeJob(id: number) {
   return job;
 }
 
-/**
- * Ad-hoc trigger from POST /scraper/trigger.
- * Uses the user's most recently updated scrape profile as the base config.
- * If the user passes a query it overrides the profile's stored searchQuery.
- */
-export async function triggerScrapeJob(userId: number, input: TriggerScrapeInput) {
-  const [profile] = await db
-    .select()
-    .from(scrapeProfiles)
-    .where(eq(scrapeProfiles.userId, userId))
-    .orderBy(desc(scrapeProfiles.updatedAt))
-    .limit(1);
 
-  if (!profile) {
-    throw Object.assign(
-      new Error("No scrape profile found. Create a scrape profile first."),
-      { statusCode: 400 }
-    );
-  }
-
-  runScrapeJob(profile, input.query).catch(console.error);
-
-  return {
-    message: "Scrape job started. Check /scraper/jobs for progress.",
-    profileUsed: profile.name,
-    query: input.query ?? profile.searchQuery,
-  };
-}

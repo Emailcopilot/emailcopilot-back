@@ -57,14 +57,3 @@ scrapeProfilesRouter.delete("/:id", async (req: Request, res: Response, next: Ne
     res.status(204).send();
   } catch (err) { next(err); }
 });
-
-// POST /api/scrape-profiles/:id/run
-scrapeProfilesRouter.post("/:id/run", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const result = await scrapeProfileService.runScrapeProfileJob(
-      Number(req.params.id),
-      req.dbUser.id
-    );
-    res.json(result);
-  } catch (err) { next(err); }
-});

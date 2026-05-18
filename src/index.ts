@@ -21,7 +21,7 @@ import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
-import { runDailySendJob } from "./services/mailer.service";
+import { sendPendingLeads } from "./services/mailer.service";
 import { initScheduler, getSchedulerStatus } from "./services/scheduler.service";
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ app.post("/send-now", async (req, res, next) => {
       return;
     }
 
-    runDailySendJob(copilot.id).catch(console.error);
+    sendPendingLeads(copilot.id).catch(console.error);
     res.json({ message: "Send job triggered. Check server logs for progress.", copilotId: copilot.id });
   } catch (err) {
     next(err);

@@ -1,7 +1,7 @@
 import { db } from "../db/drizzle";
 import { copilots, subscriptions, scrapeProfiles, emailProfiles, emailTemplates, scrapeJobs, emailLogs, leads } from "../db/schema";
 import { and, desc, eq, gte, count } from "drizzle-orm";
-import { runDailySendJob } from "./mailer.service";
+import { sendPendingLeads } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
 import { incrementUsage } from "../lib/helpers";
 import type {
@@ -192,7 +192,7 @@ export async function runCopilot(id: number, userId: number) {
       .from(scrapeProfiles)
       .where(eq(scrapeProfiles.id, copilot.scrapeProfileId));
     if (profile) {
-      console.log(` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id}`);
+      console.log(` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id} with limit ${copilot.sendLimit}`);
       runScrapeJob(profile, undefined, copilot.sendLimit)
         .then((scrapeJob) => {
           console.log(` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`);
@@ -202,7 +202,7 @@ export async function runCopilot(id: number, userId: number) {
             .catch(console.error);
 
           console.log(` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`);
-          runDailySendJob(id)
+          sendPendingLeads(id)
             .then(() => {
               console.log(` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`);
               updateCopilotStatus(id, userId, { status: "active" }).catch(console.error);

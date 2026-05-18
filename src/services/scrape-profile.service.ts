@@ -1,7 +1,6 @@
 import { db } from "../db/drizzle";
 import { scrapeProfiles } from "../db/schema";
 import { and, eq } from "drizzle-orm";
-import { runScrapeJob } from "./scraper.service";
 import type {
   CreateScrapeProfileInput,
   UpdateScrapeProfileInput,
@@ -46,40 +45,7 @@ export async function updateScrapeProfile(
 }
 
 export async function deleteScrapeProfile(id: number, userId: number) {
-  // ✅ Fixed: same and() bug
   await db
     .delete(scrapeProfiles)
     .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)));
-}
-
-export async function runScrapeProfileJob(id: number, userId: number) {
-  // ✅ Fixed: same and() bug; also now fetches the full profile to pass to runScrapeJob
-  const [profile] = await db
-    .select()
-    .from(scrapeProfiles)
-    .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)));
-  if (!profile) throw Object.assign(new Error("Scrape profile not found runScrapeProfileJob"), { statusCode: 404 });
-
-  // Optimistically mark as running — respond to the HTTP request immediately
-  await db
-    .update(scrapeProfiles)
-    .set({ status: "running", updatedAt: new Date() })
-    .where(eq(scrapeProfiles.id, id));
-
-  // Non-blocking — runScrapeJob handles its own status updates and profile resultsCount
-  runScrapeJob(profile)
-    .then(() =>
-      db
-        .update(scrapeProfiles)
-        .set({ status: "done", lastRun: new Date(), updatedAt: new Date() })
-        .where(eq(scrapeProfiles.id, id))
-    )
-    .catch(() =>
-      db
-        .update(scrapeProfiles)
-        .set({ status: "error", updatedAt: new Date() })
-        .where(eq(scrapeProfiles.id, id))
-    );
-
-  return { message: "Scrape job started", profileId: id, query: profile.searchQuery };
 }

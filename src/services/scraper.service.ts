@@ -26,6 +26,19 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const randomDelay = (min = 1500, max = 4000) =>
   delay(Math.floor(Math.random() * (max - min + 1)) + min);
 
+function cleanGoogleMapsText(text: string | null | undefined): string | null {
+  if (!text) return null;
+
+  return text
+    .trim()
+    .replace(/[\uE000-\uF8FF]/g, "") // Private Use Area
+    .replace(/[\u200B-\u200D\uFEFF]/g, "") // Zero-width spaces
+    .replace(/\u202C|\u202D|\u202E/g, "") // Bidirectional text control
+    .replace(/||||▶|►|•|▪|·/g, "") // Common icon characters
+    .replace(/\s+/g, " ") // Normalize multiple spaces
+    .trim();
+}
+
 playwrightChromium.use(stealth());
 
 // ─── Browser helpers ──────────────────────────────────────────────────────────
@@ -153,32 +166,42 @@ async function scrapeGoogleMaps(
   const seen = new Set(existingLeads.map((l) => l.companyName));
   console.log(`📋 Starting with ${seen.size} already saved leads for this job`);
 
-  let totalProcessed = seen.size;
+  // Use seen.size as the single source of truth — don't maintain a separate counter
   let page: Page | null = null;
   let batchCount = 0;
 
-  while (totalProcessed < limit) {
-    console.log(`🔄 Starting batch ${batchCount + 1}...`);
-    if (page) await page.close().catch(() => {});
+  while (seen.size < limit) {
+    batchCount++;
+    console.log(`🔄 Starting batch ${batchCount} (${seen.size}/${limit} leads so far)...`);
+
+    // Always close the old page before opening a new one
+    if (page) {
+      await page.close().catch(() => { });
+      page = null;
+    }
 
     page = await newStealthPage(browser);
-    await initPage(page, query);
-    batchCount++;
 
+    // initPage navigates to a fresh Maps search URL each batch,
+    // so scroll position always resets to the top
+    await initPage(page, query);
+
+    const sizeBeforeBatch = seen.size;
     const batchProcessed = await processBatch(page, seen, limit, userId, profileId, jobId, query);
 
-    totalProcessed += batchProcessed;
+    console.log(`✅ Batch ${batchCount} done — added ${batchProcessed} leads`);
 
-    if (batchProcessed === 0) {
-      console.log("No more new results found.");
+    // If we didn't add anything new this batch, Maps has no more results
+    if (seen.size === sizeBeforeBatch) {
+      console.log("🛑 No new results found — stopping.");
       break;
     }
 
     await randomDelay(4000, 7000);
   }
 
-  await page?.close().catch(() => {});
-  return totalProcessed;
+  await page?.close().catch(() => { });
+  return seen.size;
 }
 
 async function initPage(page: Page, query: string) {
@@ -216,15 +239,30 @@ async function processBatch(
 ): Promise<number> {
   const resultsPanel = page.locator('[role="feed"]').first();
   let processed = 0;
+  let lastCardCount = 0;
+  let stalledScrolls = 0;
 
   for (let attempt = 0; attempt < 8 && seen.size < limit; attempt++) {
-    await resultsPanel.evaluate((el) => el.scrollBy(0, 1000)).catch(() => {});
+    await resultsPanel.evaluate((el) => el.scrollBy(0, 1000)).catch(() => { });
     await randomDelay(2200, 3800);
+
+    // Break early if the card list has stopped growing for 3 consecutive scrolls
+    const currentCardCount = await page.locator('[role="feed"] > div').count().catch(() => 0);
+    if (currentCardCount === lastCardCount) {
+      stalledScrolls++;
+      if (stalledScrolls >= 3) {
+        console.log("📄 Reached end of results panel — stopping scroll.");
+        break;
+      }
+    } else {
+      stalledScrolls = 0;
+      lastCardCount = currentCardCount;
+    }
 
     if (Math.random() > 0.7) {
       await page.mouse
         .move(500 + Math.random() * 300, 300 + Math.random() * 400, { steps: 10 })
-        .catch(() => {});
+        .catch(() => { });
     }
 
     const cards = await page.locator('[role="feed"] > div').all().catch(() => []);
@@ -250,14 +288,18 @@ async function processBatch(
           .locator('a[data-item-id="authority"]')
           .getAttribute("href")
           .catch(() => null);
-        const phone = await page
-          .locator('button[data-item-id^="phone"]')
-          .textContent()
-          .catch(() => null);
-        const address = await page
-          .locator('button[data-item-id="address"]')
-          .textContent()
-          .catch(() => null);
+        const phone = cleanGoogleMapsText(
+          await page
+            .locator('button[data-item-id^="phone"]')
+            .textContent()
+            .catch(() => null)
+        );
+        const address = cleanGoogleMapsText(
+          await page
+            .locator('button[data-item-id="address"]')
+            .textContent()
+            .catch(() => null)
+        );
 
         seen.add(name);
         processed++;
@@ -420,5 +462,3 @@ export async function getScrapeJob(id: number) {
   if (!job) throw Object.assign(new Error("Job not found"), { statusCode: 404 });
   return job;
 }
-
-

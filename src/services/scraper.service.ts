@@ -279,15 +279,20 @@ async function processBatch(
         const alreadyExists = await db.query.leads.findFirst({
           where: and(eq(leads.companyName, name), eq(leads.userId, userId)),
         });
-        if (alreadyExists) continue;
+        if (alreadyExists) {
+          seen.add(name); // keep seen in sync so we don't re-check on next scroll
+          continue;
+        }
 
         await nameEl.click();
         await randomDelay(4500, 7000);
 
-        const website = await page
+        const rawWebsite = await page
           .locator('a[data-item-id="authority"]')
           .getAttribute("href")
           .catch(() => null);
+        const website = rawWebsite?.trim() || null;
+
         const phone = cleanGoogleMapsText(
           await page
             .locator('button[data-item-id^="phone"]')
@@ -301,6 +306,19 @@ async function processBatch(
             .catch(() => null)
         );
 
+        // Check website uniqueness before inserting — website has a UNIQUE constraint
+        // and a previous run may have already saved a different company at the same URL
+        if (website) {
+          const websiteExists = await db.query.leads.findFirst({
+            where: eq(leads.website, website),
+          });
+          if (websiteExists) {
+            console.log(`⏭️  Website ${website} already in DB (under "${websiteExists.companyName}") — skipping ${name}`);
+            seen.add(name);
+            continue;
+          }
+        }
+
         seen.add(name);
         processed++;
 
@@ -309,7 +327,7 @@ async function processBatch(
             userId,
             companyName: name,
             email: null,
-            website: website?.trim() || null,
+            website,
             phone: phone?.trim() || null,
             address: address?.trim() || null,
             sourceQuery: query,
@@ -319,7 +337,13 @@ async function processBatch(
           });
           console.log(`📌 Saved: ${name} ${website ? `(${website})` : "(no website)"}`);
         } catch (err) {
-          console.warn(`Failed to save ${name}:`, err instanceof Error ? err.message : "Unknown error");
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          // Gracefully handle any remaining unique-constraint races
+          if (msg.toLowerCase().includes("unique") || msg.toLowerCase().includes("duplicate")) {
+            console.warn(`⏭️  Skipping ${name} — unique constraint: ${msg}`);
+          } else {
+            console.warn(`Failed to save ${name}:`, msg);
+          }
         }
       } catch {
         continue;

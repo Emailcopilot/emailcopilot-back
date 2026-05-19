@@ -19,7 +19,8 @@ interface ScrapedLead {
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SCRAPE_TIMEOUT = 45_000;
 const DEFAULT_RESULTS_LIMIT = 10;
-const RESULTS_PER_BATCH = 10;
+const RESULTS_PER_BATCH = 20;
+const PERIODIC_RESTART_THRESHOLD = 15;
 const IS_PROD = process.env.NODE_ENV === "production";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,7 +37,14 @@ function cleanGoogleMapsText(text: string | null | undefined): string | null {
     .replace(/\u202C|\u202D|\u202E/g, "") // Bidirectional text control
     .replace(/||||▶|►|•|▪|·/g, "") // Common icon characters
     .replace(/\s+/g, " ") // Normalize multiple spaces
+    .replace(/[_*]+/g, "") // Strip markdown artifacts (e.g. __ or **)
     .trim();
+}
+
+function cleanScrapedString(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const cleaned = value.replace(/[_*]+/g, "").trim(); // Strip markdown artifacts
+  return cleaned || null; // Return null if empty after cleaning
 }
 
 playwrightChromium.use(stealth());
@@ -206,6 +214,13 @@ async function scrapeGoogleMaps(
       break;
     }
 
+    // Periodic restart every N leads (even if limit not reached yet)
+    if (seen.size > 0 && seen.size % PERIODIC_RESTART_THRESHOLD === 0 && seen.size < limit) {
+      console.log(`✅ Hit ${seen.size} leads — restarting browser for next batch...`);
+      await page?.close().catch(() => { });
+      page = null; // Will trigger new page creation on next loop iteration
+    }
+
     // Reached limit
     if (seen.size >= limit) {
       console.log(`🎯 Limit of ${limit} reached.`);
@@ -349,7 +364,7 @@ async function processBatch(
           .locator('a[data-item-id="authority"]')
           .getAttribute("href", { timeout: 5000 })
           .catch(() => null);
-        const website = rawWebsite?.trim() || null;
+        const website = cleanScrapedString(rawWebsite);
 
         const rawPhone = await page
           .locator('button[data-item-id^="phone"]')
@@ -399,7 +414,7 @@ async function processBatch(
           if (msg.toLowerCase().includes("unique") || msg.toLowerCase().includes("duplicate")) {
             console.warn(`  ⏭️  Unique constraint on insert — skipping "${cleanName}": ${msg}`);
           } else {
-            console.warn(`  ❌ Failed to save "${cleanName}": ${msg}`);
+            console.warn(`  ❌ Failed to save "${cleanName}": ${msg} error:`, err);
           }
         }
       } catch (err) {
@@ -462,10 +477,9 @@ export async function runScrapeJob(
     let emailPage = await newStealthPage(browser);
 
     const pendingLeads = await db.query.leads.findMany({
-      where: and(eq(leads.scrapeJobId, job.id), eq(leads.status, "pending_email")),
-      orderBy: desc(leads.scrapedAt),
+      where: and(eq(leads.userId, profile.userId), eq(leads.status, "pending_email"))
     });
-    console.log(`📧 ${pendingLeads.length} leads to check for emails`);
+    console.log(`📧 ${pendingLeads.length} leads to check for emails for jobId ${job.id}`);
 
     for (let i = 0; i < pendingLeads.length; i++) {
       const lead = pendingLeads[i];

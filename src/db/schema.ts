@@ -155,7 +155,7 @@ export const leads = pgTable("leads", {
     .references(() => users.id, { onDelete: "set null" }),
   companyName: varchar("company_name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).unique(),
-  website: text("website").unique(),
+  website: text("website"),
   phone: varchar("phone", { length: 50 }),
   address: text("address"),
   sourceQuery: text("source_query"),

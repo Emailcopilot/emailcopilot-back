@@ -161,46 +161,67 @@ async function scrapeGoogleMaps(
   const existingLeads = await db
     .select({ companyName: leads.companyName })
     .from(leads)
-    .where(eq(leads.scrapeJobId, jobId));
+    .where(and(eq(leads.userId, userId), eq(leads.scrapeProfileId, profileId)))
 
   const seen = new Set(existingLeads.map((l) => l.companyName));
-  console.log(`📋 Starting with ${seen.size} already saved leads for this job`);
+  console.log(`📋 Resuming job — ${seen.size} leads already saved for this job`);
 
-  // Use seen.size as the single source of truth — don't maintain a separate counter
+  // Google Maps shows all results in one scrollable feed per search.
+  // We do ONE pass per job: open the page, scroll to the bottom, process every card.
+  // A second batch only runs if we somehow hit the limit mid-scroll (rare with limit<=100).
   let page: Page | null = null;
   let batchCount = 0;
 
   while (seen.size < limit) {
     batchCount++;
-    console.log(`🔄 Starting batch ${batchCount} (${seen.size}/${limit} leads so far)...`);
+    console.log(`\n🔄 ═══ Batch ${batchCount} starting — ${seen.size}/${limit} leads so far ═══`);
 
-    // Always close the old page before opening a new one
+    // Close previous page fully (its context too) before opening a fresh one
     if (page) {
-      await page.close().catch(() => { });
+      console.log(`  ↳ Closing previous page...`);
+      try {
+        await page.context().close();
+      } catch {
+        await page.close().catch(() => { });
+      }
       page = null;
+      // Brief pause so the browser process can fully clean up
+      await delay(1500);
     }
 
+    console.log(`  ↳ Opening new stealth page...`);
     page = await newStealthPage(browser);
-
-    // initPage navigates to a fresh Maps search URL each batch,
-    // so scroll position always resets to the top
+    console.log(`  ↳ Page opened. Navigating to Maps...`);
     await initPage(page, query);
+    console.log(`  ↳ Maps loaded. Starting processBatch...`);
 
     const sizeBeforeBatch = seen.size;
     const batchProcessed = await processBatch(page, seen, limit, userId, profileId, jobId, query);
 
-    console.log(`✅ Batch ${batchCount} done — added ${batchProcessed} leads`);
+    console.log(`\n✅ Batch ${batchCount} complete — added ${batchProcessed} new leads (total seen: ${seen.size}/${limit})`);
 
-    // If we didn't add anything new this batch, Maps has no more results
+    // If nothing new was found this batch, Maps has no more results for this query
     if (seen.size === sizeBeforeBatch) {
-      console.log("🛑 No new results found — stopping.");
+      console.log("🛑 No new leads found in this batch — Google Maps has no more results. Stopping.");
       break;
     }
 
-    await randomDelay(4000, 7000);
+    // Reached limit
+    if (seen.size >= limit) {
+      console.log(`🎯 Limit of ${limit} reached.`);
+      break;
+    }
+
+    // More results needed — wait before next batch
+    const waitMs = 5000 + Math.random() * 3000;
+    console.log(`  ↳ Waiting ${Math.round(waitMs / 1000)}s before next batch...`);
+    await delay(waitMs);
   }
 
-  await page?.close().catch(() => { });
+  console.log(`\n📊 scrapeGoogleMaps done — total unique seen: ${seen.size}`);
+  if (page) {
+    await page.context().close().catch(() => page!.close().catch(() => { }));
+  }
   return seen.size;
 }
 
@@ -241,17 +262,32 @@ async function processBatch(
   let processed = 0;
   let lastCardCount = 0;
   let stalledScrolls = 0;
+  const MAX_SCROLL_ATTEMPTS = 25; // enough for 100+ results with lazy loading
 
-  for (let attempt = 0; attempt < 8 && seen.size < limit; attempt++) {
-    await resultsPanel.evaluate((el) => el.scrollBy(0, 1000)).catch(() => { });
-    await randomDelay(2200, 3800);
+  console.log(`  ↳ [processBatch] Starting scroll loop (max ${MAX_SCROLL_ATTEMPTS} attempts, limit=${limit})`);
 
-    // Break early if the card list has stopped growing for 3 consecutive scrolls
+  for (let attempt = 1; attempt <= MAX_SCROLL_ATTEMPTS && seen.size < limit; attempt++) {
+    console.log(`  ↳ [scroll ${attempt}/${MAX_SCROLL_ATTEMPTS}] seen=${seen.size}/${limit}, stalled=${stalledScrolls}`);
+
+    // Scroll down to trigger lazy loading
+    await resultsPanel.evaluate((el) => el.scrollBy(0, 1500)).catch(() => { });
+    await randomDelay(2000, 3500);
+
+    // Check if Google Maps has shown the "end of results" sentinel
+    const endOfList = await page.locator('[role="feed"] span:has-text("end of list")').isVisible({ timeout: 500 }).catch(() => false);
+    if (endOfList) {
+      console.log("  ↳ [scroll] Google Maps end-of-list sentinel detected — done scrolling.");
+      break;
+    }
+
+    // Detect scroll stall — card count not growing means we hit the bottom
     const currentCardCount = await page.locator('[role="feed"] > div').count().catch(() => 0);
+    console.log(`  ↳ [scroll ${attempt}] card count: ${currentCardCount} (was ${lastCardCount})`);
+
     if (currentCardCount === lastCardCount) {
       stalledScrolls++;
       if (stalledScrolls >= 3) {
-        console.log("📄 Reached end of results panel — stopping scroll.");
+        console.log("  ↳ [scroll] Stalled 3x — no more cards loading. Done scrolling.");
         break;
       }
     } else {
@@ -259,98 +295,121 @@ async function processBatch(
       lastCardCount = currentCardCount;
     }
 
+    // Occasional human-like mouse movement
     if (Math.random() > 0.7) {
       await page.mouse
         .move(500 + Math.random() * 300, 300 + Math.random() * 400, { steps: 10 })
         .catch(() => { });
     }
 
+    // Process all visible cards
     const cards = await page.locator('[role="feed"] > div').all().catch(() => []);
+    console.log(`  ↳ [scroll ${attempt}] processing ${cards.length} cards...`);
 
     for (const card of cards) {
-      if (seen.size >= limit) break;
+      if (seen.size >= limit) {
+        console.log(`  ↳ [cards] Reached limit (${seen.size}/${limit}) — stopping card loop.`);
+        break;
+      }
 
       try {
         const nameEl = card.locator("a[aria-label]").first();
-        const name = (await nameEl.getAttribute("aria-label"))?.trim();
 
-        if (!name || seen.has(name)) continue;
+        // getAttribute with short timeout — stale/invisible cards return null quickly
+        const name = await nameEl.getAttribute("aria-label", { timeout: 2000 }).catch(() => null);
+        if (!name?.trim()) continue;
+        const cleanName = name.trim();
 
-        const alreadyExists = await db.query.leads.findFirst({
-          where: and(eq(leads.companyName, name), eq(leads.userId, userId)),
+        // Already processed in this session
+        if (seen.has(cleanName)) continue;
+
+        console.log(`  ↳ [card] Checking: "${cleanName}"`);
+
+        // ── DB duplicate check BEFORE any click ──────────────────────────────
+        // Check company name — no click needed if it already exists
+        const existsByName = await db.query.leads.findFirst({
+          where: and(eq(leads.companyName, cleanName), eq(leads.userId, userId)),
         });
-        if (alreadyExists) {
-          seen.add(name); // keep seen in sync so we don't re-check on next scroll
+        if (existsByName) {
+          console.log(`  ↳ [card] "${cleanName}" already in DB by name — skipping (no click)`);
+          seen.add(cleanName);
           continue;
         }
 
-        await nameEl.click();
-        await randomDelay(4500, 7000);
+        // ── Click to open detail panel ────────────────────────────────────────
+        console.log(`  ↳ [card] Clicking "${cleanName}"...`);
+        await nameEl.click({ timeout: 5000 });
+        // Wait for detail panel to settle — shorter than before, with a hard cap
+        await randomDelay(2500, 4500);
+
+        // ── Extract data with explicit short timeouts ─────────────────────────
+        console.log(`  ↳ [card] Extracting details for "${cleanName}"...`);
 
         const rawWebsite = await page
           .locator('a[data-item-id="authority"]')
-          .getAttribute("href")
+          .getAttribute("href", { timeout: 5000 })
           .catch(() => null);
         const website = rawWebsite?.trim() || null;
 
-        const phone = cleanGoogleMapsText(
-          await page
-            .locator('button[data-item-id^="phone"]')
-            .textContent()
-            .catch(() => null)
-        );
-        const address = cleanGoogleMapsText(
-          await page
-            .locator('button[data-item-id="address"]')
-            .textContent()
-            .catch(() => null)
-        );
+        const rawPhone = await page
+          .locator('button[data-item-id^="phone"]')
+          .textContent({ timeout: 5000 })
+          .catch(() => null);
+        const phone = cleanGoogleMapsText(rawPhone);
 
-        // Check website uniqueness before inserting — website has a UNIQUE constraint
-        // and a previous run may have already saved a different company at the same URL
+        const rawAddress = await page
+          .locator('button[data-item-id="address"]')
+          .textContent({ timeout: 5000 })
+          .catch(() => null);
+        const address = cleanGoogleMapsText(rawAddress);
+
+        console.log(`  ↳ [card] "${cleanName}" — website=${website ?? "none"}, phone=${phone ?? "none"}`);
+
+        // ── Website duplicate check (unique constraint) ───────────────────────
         if (website) {
-          const websiteExists = await db.query.leads.findFirst({
-            where: eq(leads.website, website),
+          const existsByWebsite = await db.query.leads.findFirst({
+            where: and(eq(leads.website, website), eq(leads.userId, userId)),
           });
-          if (websiteExists) {
-            console.log(`⏭️  Website ${website} already in DB (under "${websiteExists.companyName}") — skipping ${name}`);
-            seen.add(name);
+          if (existsByWebsite) {
+            console.log(`  ↳ [card] Website ${website} already in DB (under "${existsByWebsite.companyName}") — skipping "${cleanName}"`);
+            seen.add(cleanName);
             continue;
           }
         }
 
-        seen.add(name);
-        processed++;
-
+        // ── Insert ────────────────────────────────────────────────────────────
+        seen.add(cleanName);
         try {
           await db.insert(leads).values({
             userId,
-            companyName: name,
+            companyName: cleanName,
             email: null,
             website,
-            phone: phone?.trim() || null,
-            address: address?.trim() || null,
+            phone: phone ?? null,
+            address: address ?? null,
             sourceQuery: query,
             scrapeProfileId: profileId,
             scrapeJobId: jobId,
             status: "pending_email",
           });
-          console.log(`📌 Saved: ${name} ${website ? `(${website})` : "(no website)"}`);
+          processed++;
+          console.log(`  📌 Saved [${processed}]: "${cleanName}" ${website ? `(${website})` : "(no website)"}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Unknown error";
-          // Gracefully handle any remaining unique-constraint races
           if (msg.toLowerCase().includes("unique") || msg.toLowerCase().includes("duplicate")) {
-            console.warn(`⏭️  Skipping ${name} — unique constraint: ${msg}`);
+            console.warn(`  ⏭️  Unique constraint on insert — skipping "${cleanName}": ${msg}`);
           } else {
-            console.warn(`Failed to save ${name}:`, msg);
+            console.warn(`  ❌ Failed to save "${cleanName}": ${msg}`);
           }
         }
-      } catch {
+      } catch (err) {
+        console.warn(`  ⚠️  Error processing card: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
     }
   }
 
+  console.log(`  ↳ [processBatch] Done. processed=${processed}, seen=${seen.size}`);
   return processed;
 }
 
@@ -386,40 +445,54 @@ export async function runScrapeJob(
   let browser: Browser | null = null;
   let newLeadsCount = 0;
 
-  try {
-    browser = await launchBrowser();
-    const foundCount = await scrapeGoogleMaps(browser, query, limit, profile.userId, profile.id, job.id);
-    console.log(`📋 Found ${foundCount} listings, extracting emails...`);
+  // Heartbeat: logs every 30s so we can tell if the job is alive or silently hung
+  const heartbeat = setInterval(() => {
+    console.log(`💓 [heartbeat] Job ${job.id} still running — ${new Date().toISOString()}`);
+  }, 30_000);
 
-    const page = await newStealthPage(browser);
+  try {
+    console.log(`🚀 Launching browser...`);
+    browser = await launchBrowser();
+    console.log(`✅ Browser launched. Starting Maps scrape...`);
+
+    const foundCount = await scrapeGoogleMaps(browser, query, limit, profile.userId, profile.id, job.id);
+    console.log(`\n📋 Maps scrape done — ${foundCount} listings found. Starting email extraction...`);
+
+    // Reuse the browser but open a fresh page for website crawling
+    let emailPage = await newStealthPage(browser);
 
     const pendingLeads = await db.query.leads.findMany({
       where: and(eq(leads.scrapeJobId, job.id), eq(leads.status, "pending_email")),
       orderBy: desc(leads.scrapedAt),
     });
+    console.log(`📧 ${pendingLeads.length} leads to check for emails`);
 
-    for (const lead of pendingLeads) {
+    for (let i = 0; i < pendingLeads.length; i++) {
+      const lead = pendingLeads[i];
+      console.log(`\n📧 [${i + 1}/${pendingLeads.length}] Processing: "${lead.companyName}"`);
+
       if (!lead.website) {
         await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
-        console.log(`⚠️  No website for ${lead.companyName} — skipping`);
+        console.log(`  ↳ No website — marking failed`);
         continue;
       }
 
-      console.log(`🌐 Checking website for email: ${lead.website}`);
-      const email = await findEmailOnWebsite(page, lead.website);
+      console.log(`  ↳ Scraping: ${lead.website}`);
+      const email = await findEmailOnWebsite(emailPage, lead.website);
 
       if (!email) {
         await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
-        console.log(`⚠️  No email found for ${lead.companyName}`);
+        console.log(`  ↳ No email found — marking failed`);
         continue;
       }
 
+      console.log(`  ↳ Found email: ${email} — checking for duplicates...`);
       const emailExists = await db.query.leads.findFirst({
         where: and(eq(leads.email, email), eq(leads.userId, profile.userId)),
       });
       if (emailExists) {
         await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
-        console.log(`⏭️  Email ${email} already in DB — skipping`);
+        console.log(`  ↳ Email already in DB (lead #${emailExists.id}) — marking failed`);
         continue;
       }
 
@@ -429,8 +502,8 @@ export async function runScrapeJob(
         .where(eq(leads.id, lead.id));
 
       newLeadsCount++;
-      console.log(`✅ Saved: ${lead.companyName} <${email}>`);
-      await randomDelay(1500, 3000);
+      console.log(`  ✅ Saved: "${lead.companyName}" <${email}> (total: ${newLeadsCount})`);
+      await randomDelay(1200, 2500);
     }
 
     await db
@@ -451,12 +524,18 @@ export async function runScrapeJob(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error(`❌ Scrape job failed: ${message}`);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
     await db
       .update(scrapeJobs)
       .set({ status: "failed", errorMessage: message, finishedAt: new Date() })
       .where(eq(scrapeJobs.id, job.id));
   } finally {
-    await browser?.close();
+    clearInterval(heartbeat);
+    console.log(`🔒 Closing browser...`);
+    await browser?.close().catch((e) => console.warn(`⚠️  Browser close error: ${e}`));
+    console.log(`🔒 Browser closed.`);
   }
 
   return job;

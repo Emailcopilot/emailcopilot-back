@@ -49,7 +49,7 @@ templatesRouter.put(
 // DELETE /api/templates/:id
 templatesRouter.delete("/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await templateService.deleteTemplate(req.dbUser.id, Number(req.params.id));
+    await templateService.deleteTemplate(Number(req.params.id), req.dbUser.id);
     res.status(204).send();
   } catch (err) { next(err); }
 });

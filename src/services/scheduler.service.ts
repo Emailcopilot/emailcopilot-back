@@ -1,4 +1,3 @@
-import cron from "node-cron";
 import { subscriptions, copilots } from "../db/schema";
 import { desc, eq, and } from "drizzle-orm";
 import { runCopilot } from "./copilot.service";
@@ -6,12 +5,12 @@ import { db } from "../db/drizzle";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 interface SchedulerState {
-  job: cron.ScheduledTask | null;
+  timeout: NodeJS.Timeout | null;
   copilotId: number | null;
 }
 
 const state: SchedulerState = {
-  job: null,
+  timeout: null,
   copilotId: null,
 };
 
@@ -43,13 +42,24 @@ async function getActiveCopilot(userId: number) {
 }
 
 function stopAll() {
-  state.job?.stop();
-  state.job = null;
+  if (state.timeout) {
+    clearTimeout(state.timeout);
+    state.timeout = null;
+  }
   state.copilotId = null;
 }
 
-function atTime(hour: string, minute: string): string {
-  return `${minute} ${hour} * * *`;
+function calculateDelay(runAt: string): number {
+  const now = new Date();
+  const [targetHour, targetMinute] = runAt.split(":").map(Number);
+  const target = new Date(now);
+  target.setHours(targetHour, targetMinute, 0, 0);
+
+  if (target <= now) {
+    target.setDate(target.getDate() + 1);
+  }
+
+  return target.getTime() - now.getTime();
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -78,9 +88,11 @@ export async function initScheduler(userId: number): Promise<void> {
 
   const settings = copilot.settings as { schedule?: { runAt?: string } } | undefined;
   const runAt = settings?.schedule?.runAt ?? "09:00";
-  const [hour, minute] = runAt.split(":");
 
-  state.job = cron.schedule(atTime(hour, minute), async () => {
+  const delay = calculateDelay(runAt);
+  console.log(`   ⏱️  Copilot will run at ${runAt} (in ${Math.round(delay / 1000 / 60)} minutes)`);
+
+  state.timeout = setTimeout(async () => {
     console.log(`\n🚀 [${new Date().toISOString()}] Running copilot ${state.copilotId}`);
     try {
       if (!state.copilotId) {
@@ -91,8 +103,9 @@ export async function initScheduler(userId: number): Promise<void> {
     } catch (e) {
       console.error("❌ Copilot run error:", e);
     }
-  });
-  console.log(`   ✅ Copilot runs at ${runAt} daily`);
+    console.log(`   🛑 Copilot finished. Scheduler stopped.`);
+    state.timeout = null;
+  }, delay);
 
   console.log("⏰ Scheduler ready.\n");
 }
@@ -104,7 +117,7 @@ export async function restartScheduler(userId: number): Promise<void> {
 
 export function getSchedulerStatus() {
   return {
-    job: { active: state.job !== null },
+    active: state.timeout !== null,
     copilotId: state.copilotId,
   };
 }

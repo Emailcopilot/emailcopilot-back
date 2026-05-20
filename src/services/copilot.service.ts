@@ -200,12 +200,23 @@ export async function runCopilot(id: number, userId: number) {
             .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
             .where(eq(copilots.id, id))
             .catch(console.error);
-
+        })
+        .catch((err) => {
+          console.error(` ${new Date().toLocaleTimeString()} - ⚠️ Scrape job failed for copilot ${id}:`, err);
+          db.update(copilots)
+            .set({ status: "paused", lastError: "Scrape job failed: " + err.message, updatedAt: new Date() })
+            .where(eq(copilots.id, id))
+            .catch(console.error);
+        })
+        .finally(() => {
           console.log(` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`);
           sendPendingLeads(id)
             .then(() => {
               console.log(` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`);
-              updateCopilotStatus(id, userId, { status: "active" }).catch(console.error);
+              db.update(copilots)
+                .set({ status: "completed", updatedAt: new Date() })
+                .where(eq(copilots.id, id))
+                .catch(console.error);
             })
             .catch((err) => {
               console.error(` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`, err);
@@ -214,14 +225,7 @@ export async function runCopilot(id: number, userId: number) {
                 .where(eq(copilots.id, id))
                 .catch(console.error);
             });
-        })
-        .catch((err) => {
-          console.error(` ${new Date().toLocaleTimeString()} - ❌ Scrape job failed for copilot ${id}:`, err);
-          db.update(copilots)
-            .set({ status: "paused", lastError: "Scrape job failed: " + err.message, updatedAt: new Date() })
-            .where(eq(copilots.id, id))
-            .catch(console.error);
-        })
+        });
     }
   }
 

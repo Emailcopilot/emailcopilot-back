@@ -26,7 +26,7 @@ export const templateCategoryEnum = pgEnum("template_category", [
   "Other",
 ]);
 
-export const copilotStatusEnum = pgEnum("copilot_status", ["draft", "active", "paused", "archived", "running"]);
+export const copilotStatusEnum = pgEnum("copilot_status", ["draft", "active", "paused", "archived", "running", "completed"]);
 
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "active",

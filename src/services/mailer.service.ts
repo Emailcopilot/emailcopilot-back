@@ -1,5 +1,15 @@
 import nodemailer from "nodemailer";
-import { leads, emailTemplates, emailLogs, emailProfiles, copilots } from "../db/schema";
+import {
+  leads,
+  emailTemplates,
+  emailLogs,
+  emailProfiles,
+  copilots,
+  copilotLeadsTable,
+  leads2Table,
+  subscriptions,
+  users,
+} from "../db/schema";
 import { eq, gte, and, count, inArray, sql, or } from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
@@ -73,7 +83,7 @@ async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
     throw new Error("Template not found.");
   }
 
-return template;
+  return template;
 }
 
 // ─── SMTP helpers ─────────────────────────────────────────────────────────────
@@ -89,7 +99,7 @@ async function getGlobalSmtpConfig(): Promise<SmtpConfig> {
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw new Error(
-      "No active email profile configured. Please set up an active SMTP email profile."
+      "No active email profile configured. Please set up an active SMTP email profile.",
     );
   }
 
@@ -104,14 +114,14 @@ async function getGlobalSmtpConfig(): Promise<SmtpConfig> {
 
 /**
  * Creates a Nodemailer transporter instance configured with SMTP settings.
- * 
+ *
  * @param config - SMTP configuration object containing connection details
  * @param config.host - The SMTP server hostname
  * @param config.port - The SMTP server port number
  * @param config.email - The SMTP authentication email (typically an email address)
  * @param config.pass - The SMTP authentication password
  * @returns A configured Transporter instance ready to send emails
- * 
+ *
  * @example
  * const transporter = createTransporter({
  *   host: 'smtp.gmail.com',
@@ -142,7 +152,7 @@ function interpolate(text: string, lead: Lead, sendName: string): string {
 async function sendEmail(
   copilotId: number,
   lead: Lead,
-  template: EmailTemplate
+  template: EmailTemplate,
 ): Promise<SendResult> {
   try {
     const config = await getCopilotSmtpConfig(copilotId);
@@ -164,7 +174,10 @@ async function sendEmail(
       subject,
       status: "sent",
     });
-    await db.update(leads).set({ status: "sent", emailedAt: new Date() }).where(eq(leads.id, lead.id));
+    await db
+      .update(leads)
+      .set({ status: "sent", emailedAt: new Date() })
+      .where(eq(leads.id, lead.id));
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
 
@@ -209,7 +222,10 @@ export async function sendPendingLeads(copilotId: number): Promise<void> {
     return;
   }
 
-  const [copilot] = await db.select().from(copilots).where(eq(copilots.id, copilotId));
+  const [copilot] = await db
+    .select()
+    .from(copilots)
+    .where(eq(copilots.id, copilotId));
   const limit = copilot?.sendLimit ?? 0;
 
   const startOfDay = new Date();
@@ -218,7 +234,9 @@ export async function sendPendingLeads(copilotId: number): Promise<void> {
   const [{ sentToday }] = await db
     .select({ sentToday: count() })
     .from(emailLogs)
-    .where(and(eq(emailLogs.status, "sent"), gte(emailLogs.sentAt, startOfDay)));
+    .where(
+      and(eq(emailLogs.status, "sent"), gte(emailLogs.sentAt, startOfDay)),
+    );
 
   const remaining = limit - Number(sentToday);
   if (remaining <= 0) {
@@ -226,7 +244,9 @@ export async function sendPendingLeads(copilotId: number): Promise<void> {
     return;
   }
 
-  console.log(`📬 Sending up to ${remaining} emails (${sentToday}/${limit} sent today)`);
+  console.log(
+    `📬 Sending up to ${remaining} emails (${sentToday}/${limit} sent today)`,
+  );
 
   const pendingLeads = await db.query.leads.findMany({
     where: or(eq(leads.status, "new"), eq(leads.status, "queued")),
@@ -252,19 +272,24 @@ export async function sendPendingLeads(copilotId: number): Promise<void> {
       where: and(
         eq(emailLogs.leadId, lead.id),
         eq(emailLogs.status, "sent"),
-        gte(emailLogs.sentAt, startOfDay)
+        gte(emailLogs.sentAt, startOfDay),
       ),
     });
 
     if (alreadySent) {
       console.log(`⏭️  Lead ${lead.id} already sent today — marking as "sent"`);
-      await db.update(leads).set({ status: "sent" }).where(eq(leads.id, lead.id));
+      await db
+        .update(leads)
+        .set({ status: "sent" })
+        .where(eq(leads.id, lead.id));
       continue;
     }
 
     if (i > 0) {
       const delayMs = randomBetween(2 * 60 * 1000, 5 * 60 * 1000);
-      console.log(`⏳ Waiting ${Math.round(delayMs / 1000)}s before next send...`);
+      console.log(
+        `⏳ Waiting ${Math.round(delayMs / 1000)}s before next send...`,
+      );
       await sleep(delayMs);
     }
     await sendEmail(copilotId, lead, template);
@@ -278,7 +303,9 @@ export async function sendPendingLeads(copilotId: number): Promise<void> {
 /**
  * Tests an SMTP connection with an explicit config.
  */
-export async function testSmtpConnection(config: SmtpConfig): Promise<SendResult> {
+export async function testSmtpConnection(
+  config: SmtpConfig,
+): Promise<SendResult> {
   try {
     const transporter = createTransporter(config);
     await transporter.verify();
@@ -295,3 +322,82 @@ export async function testSmtpConnection(config: SmtpConfig): Promise<SendResult
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const randomBetween = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
+
+// ─── Periodic send ──────────────────────────────────────────────────────────────────────
+async function periodicSend(): Promise<void> {
+  console.log("📧 Periodic send job started...");
+  const copilotLeadsData = await db
+    .select()
+    .from(copilotLeadsTable)
+    .leftJoin(leads2Table, eq(copilotLeadsTable.leadId, leads2Table.id))
+    .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id))
+    .leftJoin(emailTemplates, eq(copilots.templateId, emailTemplates.id))
+    .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
+    .leftJoin(users, eq(copilots.userId, users.id))
+    .where(eq(copilotLeadsTable.status, "new"));
+
+  for (const copilotLead of copilotLeadsData) {
+    console.log(
+      `📧 Sending email to ${copilotLead.leads2!.email} (${copilotLead.leads2!.companyName})`,
+    );
+
+    const monthlySentEmail = await db.$count(
+      emailLogs,
+      and(
+        eq(emailLogs.status, "sent"),
+        gte(
+          emailLogs.sentAt,
+          new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+        ),
+      ),
+    );
+
+    const [subscription] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.userId, copilotLead.users!.id));
+
+    if (!subscription) {
+      console.log(
+        `❌ No subscription found for user ${copilotLead.users!.email}`,
+      );
+      continue;
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(copilotLeadsTable)
+        .set({ status: "sent", sentAt: new Date() })
+        .where(eq(copilotLeadsTable.id, copilotLead.copilot_leads.id));
+
+      const config = await getCopilotSmtpConfig(copilotLead.copilots!.id);
+      const transporter = createTransporter(config);
+      const subject = interpolate(
+        copilotLead.email_templates!.subject ?? "",
+        copilotLead.leads2!,
+        config.sendName,
+      );
+      const body = interpolate(
+        copilotLead.email_templates!.body ?? "",
+        copilotLead.leads2!,
+        config.sendName,
+      );
+
+      await transporter.sendMail({
+        from: `"${config.sendName}" <${config.email}>`,
+        to: copilotLead.leads2!.email as string,
+        subject,
+        text: body,
+      });
+      console.log(
+        `✅ Email sent to ${copilotLead.leads2!.email} (${copilotLead.leads2!.companyName})`,
+      );
+    });
+  }
+  console.log("✅ Periodic send job complete.");
+}
+
+export function periodicSendScheduler() {
+  periodicSend().catch(console.error);
+  setInterval(periodicSend, 1000 * 60 * 1);
+}

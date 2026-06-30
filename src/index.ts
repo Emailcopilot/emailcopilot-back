@@ -21,8 +21,14 @@ import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
-import { sendPendingLeads } from "./services/mailer.service";
-import { initScheduler, getSchedulerStatus } from "./services/scheduler.service";
+import {
+  periodicSendScheduler,
+  sendPendingLeads,
+} from "./services/mailer.service";
+import {
+  initScheduler,
+  getSchedulerStatus,
+} from "./services/scheduler.service";
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
 import { db } from "./db/drizzle";
@@ -41,7 +47,7 @@ app.use(
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
-  })
+  }),
 );
 app.use(clerkMiddleware());
 
@@ -103,7 +109,10 @@ app.post("/send-now", async (req, res, next) => {
     }
 
     sendPendingLeads(copilot.id).catch(console.error);
-    res.json({ message: "Send job triggered. Check server logs for progress.", copilotId: copilot.id });
+    res.json({
+      message: "Send job triggered. Check server logs for progress.",
+      copilotId: copilot.id,
+    });
   } catch (err) {
     next(err);
   }
@@ -132,23 +141,24 @@ app.listen(PORT, async () => {
 
   // Start cron jobs — only for active subscriptions, one scheduler per user
   // (multiple subs per user would spin up duplicate jobs)
-  const activeSubscriptions = await db
-    .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.status, "active"));
+  // const activeSubscriptions = await db
+  //   .select()
+  //   .from(subscriptions)
+  //   .where(eq(subscriptions.status, "active"));
 
-  if (activeSubscriptions.length === 0) {
-    console.log("⚠️  No active subscriptions found. Scheduler not started.");
-  } else {
-    // Group by userId to avoid duplicate schedulers if a user has multiple sub rows
-    const seenUsers = new Set<number>();
-    for (const sub of activeSubscriptions) {
-      if (seenUsers.has(sub.userId)) continue;
-      seenUsers.add(sub.userId);
-      await initScheduler(sub.userId);
-    }
-    console.log(`⏰ Schedulers started for ${seenUsers.size} user(s).`);
-  }
+  // if (activeSubscriptions.length === 0) {
+  //   console.log("⚠️  No active subscriptions found. Scheduler not started.");
+  // } else {
+  //   // Group by userId to avoid duplicate schedulers if a user has multiple sub rows
+  //   const seenUsers = new Set<number>();
+  //   for (const sub of activeSubscriptions) {
+  //     if (seenUsers.has(sub.userId)) continue;
+  //     seenUsers.add(sub.userId);
+  //     await initScheduler(sub.userId);
+  //   }
+  //   console.log(`⏰ Schedulers started for ${seenUsers.size} user(s).`);
+  // }
+  periodicSendScheduler();
 });
 
 export default app;

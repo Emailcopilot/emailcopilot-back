@@ -9,14 +9,40 @@ import {
   pgEnum,
   jsonb,
 } from "drizzle-orm/pg-core";
+import * as d from "drizzle-orm/pg-core";
+
+const defaultColumns = () => {
+  return {
+    id: d.integer().primaryKey().generatedAlwaysAsIdentity(),
+    createdAt: d.timestamp().notNull().defaultNow(),
+    updatedAt: d.timestamp().notNull().defaultNow(),
+  };
+};
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
-export const emailProviderEnum = pgEnum("email_provider", ["gmail", "outlook", "smtp"]);
-export const emailProfileStatusEnum = pgEnum("email_profile_status", ["active", "inactive", "error"]);
+export const emailProviderEnum = pgEnum("email_provider", [
+  "gmail",
+  "outlook",
+  "smtp",
+]);
+export const emailProfileStatusEnum = pgEnum("email_profile_status", [
+  "active",
+  "inactive",
+  "error",
+]);
 
-export const scrapeStatusEnum = pgEnum("scrape_status", ["idle", "running", "done", "error"]);
-export const scrapeJobStatusEnum = pgEnum("scrape_job_status", ["running", "done", "failed"]);
+export const scrapeStatusEnum = pgEnum("scrape_status", [
+  "idle",
+  "running",
+  "done",
+  "error",
+]);
+export const scrapeJobStatusEnum = pgEnum("scrape_job_status", [
+  "running",
+  "done",
+  "failed",
+]);
 
 export const templateCategoryEnum = pgEnum("template_category", [
   "Cold Outreach",
@@ -26,7 +52,14 @@ export const templateCategoryEnum = pgEnum("template_category", [
   "Other",
 ]);
 
-export const copilotStatusEnum = pgEnum("copilot_status", ["draft", "active", "paused", "archived", "running", "completed"]);
+export const copilotStatusEnum = pgEnum("copilot_status", [
+  "draft",
+  "active",
+  "paused",
+  "archived",
+  "running",
+  "completed",
+]);
 
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "active",
@@ -37,7 +70,11 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "suspended",
 ]);
 
-export const invoiceStatusEnum = pgEnum("invoice_status", ["paid", "pending", "failed"]);
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "paid",
+  "pending",
+  "failed",
+]);
 
 export const themeEnum = pgEnum("theme", ["light", "dark", "system"]);
 
@@ -53,7 +90,12 @@ export const leadStatusEnum = pgEnum("lead_status", [
   "pending_email",
 ]);
 
-export const emailLogStatusEnum = pgEnum("email_log_status", ["sent", "failed", "opened", "replied"]);
+export const emailLogStatusEnum = pgEnum("email_log_status", [
+  "sent",
+  "failed",
+  "opened",
+  "replied",
+]);
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
@@ -134,11 +176,14 @@ export const scrapeProfiles = pgTable("scrape_profiles", {
 
 export const scrapeJobs = pgTable("scrape_jobs", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .references(() => users.id, { onDelete: "set null" }),
+  userId: integer("user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   // ✅ Added: which profile triggered this job (null for ad-hoc calls)
-  scrapeProfileId: integer("scrape_profile_id")
-    .references(() => scrapeProfiles.id, { onDelete: "set null" }),
+  scrapeProfileId: integer("scrape_profile_id").references(
+    () => scrapeProfiles.id,
+    { onDelete: "set null" },
+  ),
   query: text("query").notNull(),
   status: scrapeJobStatusEnum("status").notNull().default("running"),
   leadsFound: integer("leads_found").notNull().default(0),
@@ -151,8 +196,9 @@ export const scrapeJobs = pgTable("scrape_jobs", {
 
 export const leads = pgTable("leads", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .references(() => users.id, { onDelete: "set null" }),
+  userId: integer("user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   companyName: varchar("company_name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).unique(),
   website: text("website"),
@@ -161,17 +207,51 @@ export const leads = pgTable("leads", {
   sourceQuery: text("source_query"),
   // ✅ Added: direct link to the profile that found this lead (scrapeJobId alone wasn't enough
   //    because you'd need a join to go lead → job → profile)
-  scrapeProfileId: integer("scrape_profile_id")
-    .references(() => scrapeProfiles.id, { onDelete: "set null" }),
-  scrapeJobId: integer("scrape_job_id")
-    .references(() => scrapeJobs.id, { onDelete: "set null" }),
+  scrapeProfileId: integer("scrape_profile_id").references(
+    () => scrapeProfiles.id,
+    { onDelete: "set null" },
+  ),
+  scrapeJobId: integer("scrape_job_id").references(() => scrapeJobs.id, {
+    onDelete: "set null",
+  }),
   scrapedAt: timestamp("scraped_at").notNull().defaultNow(),
   status: leadStatusEnum("status").notNull().default("new"),
-  notes: text("notes"),                // ✅ Added: used by patchLead
+  notes: text("notes"), // ✅ Added: used by patchLead
   emailedAt: timestamp("emailed_at"),
-  repliedAt: timestamp("replied_at"),  // ✅ Added: used by patchLead
+  repliedAt: timestamp("replied_at"), // ✅ Added: used by patchLead
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const leadStatusEnum2 = pgEnum("lead_status_enum", ["success", "fail"]);
+
+export const leads2Table = pgTable("leads2", {
+  ...defaultColumns(),
+  status: leadStatusEnum2().notNull(),
+  companyName: varchar().notNull(),
+  email: varchar(),
+  website: varchar(),
+  phone: varchar(),
+  address: varchar(),
+  sourceQuery: varchar(),
+  placeId: varchar().unique(),
+  emailScrapedAt: timestamp(),
+});
+
+export const copilotLeadStatusEnum = pgEnum("copilot_lead_status_enum", [
+  "new",
+  "sent",
+  "failed",
+]);
+
+export const copilotLeadsTable = pgTable("copilot_leads", {
+  ...defaultColumns(),
+  copilotId: integer().references(() => copilots.id),
+  leadId: integer().references(() => leads2Table.id),
+  status: copilotLeadStatusEnum().notNull().default("new"),
+  sentAt: timestamp(),
+  failedAt: timestamp(),
+  errorMessage: text(),
 });
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
@@ -184,8 +264,9 @@ export const emailLogs = pgTable("email_logs", {
   leadId: integer("lead_id")
     .notNull()
     .references(() => leads.id, { onDelete: "cascade" }),
-  templateId: integer("template_id")
-    .references(() => emailTemplates.id, { onDelete: "set null" }),
+  templateId: integer("template_id").references(() => emailTemplates.id, {
+    onDelete: "set null",
+  }),
   subject: text("subject").notNull(),
   status: emailLogStatusEnum("status").notNull(),
   errorMessage: text("error_message"),
@@ -214,21 +295,32 @@ export const copilots = pgTable("copilots", {
   description: text("description"),
   sendLimit: integer("send_limit").notNull().default(100),
   status: copilotStatusEnum("status").notNull().default("draft"),
-  emailProfileId: integer("email_profile_id").references(() => emailProfiles.id, {
-    onDelete: "set null",
-  }),
-  scrapeProfileId: integer("scrape_profile_id").references(() => scrapeProfiles.id, {
-    onDelete: "set null",
-  }),
+  emailProfileId: integer("email_profile_id").references(
+    () => emailProfiles.id,
+    {
+      onDelete: "set null",
+    },
+  ),
+  scrapeProfileId: integer("scrape_profile_id").references(
+    () => scrapeProfiles.id,
+    {
+      onDelete: "set null",
+    },
+  ),
   templateId: integer("template_id").references(() => emailTemplates.id, {
     onDelete: "set null",
   }),
-  settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
+  settings: jsonb("settings")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   emailsSent: integer("emails_sent").notNull().default(0),
   emailsOpened: integer("emails_opened").notNull().default(0),
   emailsReplied: integer("emails_replied").notNull().default(0),
   lastRunAt: timestamp("last_run_at"),
-  lastJobId: integer("last_job_id").references(() => scrapeJobs.id, { onDelete: "set null" }),
+  lastJobId: integer("last_job_id").references(() => scrapeJobs.id, {
+    onDelete: "set null",
+  }),
   lastError: text("last_error"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -258,9 +350,12 @@ export const invoices = pgTable("invoices", {
   userId: integer("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  subscriptionId: integer("subscription_id").references(() => subscriptions.id, {
-    onDelete: "set null",
-  }),
+  subscriptionId: integer("subscription_id").references(
+    () => subscriptions.id,
+    {
+      onDelete: "set null",
+    },
+  ),
   molliePaymentId: varchar("mollie_payment_id", { length: 255 }),
   amount: integer("amount").notNull(),
   currency: varchar("currency", { length: 10 }).notNull().default("eur"),
@@ -272,8 +367,13 @@ export const invoices = pgTable("invoices", {
 
 export const usage = pgTable("usage", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  subscriptionId: integer("subscription_id").references(() => subscriptions.id, { onDelete: "set null" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  subscriptionId: integer("subscription_id").references(
+    () => subscriptions.id,
+    { onDelete: "set null" },
+  ),
   periodStart: timestamp("period_start").notNull(),
   periodEnd: timestamp("period_end").notNull(),
   emailsSent: integer("emails_sent").notNull().default(0),

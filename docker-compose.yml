@@ -1,4 +1,14 @@
 services:
+  db:
+    image: postgres:17.3-alpine
+    restart: always
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
   app:
     build: . # ← Dockerfile is at root now, not ./app
     container_name: lead-gen-app
@@ -11,3 +21,6 @@ services:
       resources:
         limits:
           memory: 1g
+
+volumes:
+  db_data:

@@ -57,3 +57,4 @@ ehthumbs.db
 
 # Local development
 .cache/
+.env.prod

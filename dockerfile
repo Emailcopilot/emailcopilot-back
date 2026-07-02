@@ -13,7 +13,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Copy source and config
-COPY tsconfig.json ./
+COPY esbuild.js ./
 COPY src/ ./src/
 COPY migrations/ ./migrations/
 RUN mkdir -p /app/debug

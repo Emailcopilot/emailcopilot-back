@@ -1,0 +1,39 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: GitHub environment (dev or prod)
+      compose_service:
+        required: true
+        type: string
+        description: Docker Compose service to build and start (e.g. dev-app or app)
+
+jobs:
+  deploy:
+    runs-on: [self-hosted]
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create .env file with secrets
+        run: |
+          cat <<EOF > .env
+          PORT=${{ vars.PORT }}
+          NODE_ENV=${{ vars.NODE_ENV }}
+          MOLLIE_API_KEY=${{ secrets.MOLLIE_API_KEY }}
+          WEBHOOK_URL=${{ vars.WEBHOOK_URL }}
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          EOF
+
+      - name: Build and run with Docker Compose
+        run: |
+          sudo docker compose build ${{ inputs.compose_service }}
+          sudo docker compose up -d ${{ inputs.compose_service }}
+          sudo docker image prune -f

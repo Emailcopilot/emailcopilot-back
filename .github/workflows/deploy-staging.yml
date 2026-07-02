@@ -1,0 +1,14 @@
+name: Deploy STAGING
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: STAGING
+      compose_service: app
+    secrets: inherit

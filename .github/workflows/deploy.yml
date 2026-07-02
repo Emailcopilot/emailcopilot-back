@@ -26,10 +26,15 @@ jobs:
           cat <<EOF > .env
           PORT=${{ vars.PORT }}
           NODE_ENV=${{ vars.NODE_ENV }}
-          MOLLIE_API_KEY=${{ secrets.MOLLIE_API_KEY }}
           WEBHOOK_URL=${{ vars.WEBHOOK_URL }}
+          CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
+          FRONTEND_URL=${{ vars.FRONTEND_URL }}
+          MOLLIE_API_KEY=${{ secrets.MOLLIE_API_KEY }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_WEBHOOK_SIGNING_SECRET=${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
           EOF
 
       - name: Build and run with Docker Compose

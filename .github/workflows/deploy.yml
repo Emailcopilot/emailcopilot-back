@@ -30,7 +30,6 @@ jobs:
           WEBHOOK_URL=${{ vars.WEBHOOK_URL }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-          MOLLIE_API_KEY=${{ secrets.MOLLIE_API_KEY }}
           EOF
 
       - name: Build and run with Docker Compose

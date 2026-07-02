@@ -36,6 +36,7 @@ import { db } from "./db/drizzle";
 import { subscriptions, users, copilots } from "./db/schema";
 import BrowserManager from "./scraping/browserManager";
 import morgan from "morgan";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const app: express.Application = express();
@@ -142,6 +143,8 @@ app.use(errorHandler);
 app.listen(PORT, async () => {
   console.log(`✅ API running on http://localhost:${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
+  await migrate(db, { migrationsFolder: "./migrations" });
+  console.log("✅ Migrations applied");
 
   // Start cron jobs — only for active subscriptions, one scheduler per user
   // (multiple subs per user would spin up duplicate jobs)

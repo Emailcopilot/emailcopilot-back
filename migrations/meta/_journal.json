@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1776211440838,
-      "tag": "0000_tranquil_epoch",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778624567093,
-      "tag": "0001_shocking_shard",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1778627639492,
-      "tag": "0002_pale_star_brand",
+      "when": 1782990939654,
+      "tag": "0000_vengeful_lester",
       "breakpoints": true
     }
   ]

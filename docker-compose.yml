@@ -27,7 +27,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - /home/github-runner/emailcopilot-back/Caddyfile:/etc/caddy/Caddyfile
 
 volumes:
   db_data:

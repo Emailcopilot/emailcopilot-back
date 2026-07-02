@@ -1,12 +1,21 @@
 import { db } from "../db/drizzle";
 import { leads, emailLogs } from "../db/schema";
-import { eq, desc, count, sql } from "drizzle-orm";
+import { eq, desc, count, sql, and } from "drizzle-orm";
 import type { LeadStatus } from "../db/types";
-import type { PatchLeadInput, ListLeadsInput } from "../validators/lead.validator";
+import type {
+  PatchLeadInput,
+  ListLeadsInput,
+} from "../validators/lead.validator";
 
-export async function listLeads({ status, page, limit }: ListLeadsInput) {
+export async function listLeads(
+  { status, page, limit }: ListLeadsInput,
+  userId: number,
+) {
   const offset = (page - 1) * limit;
-  const where = status ? eq(leads.status, status as LeadStatus) : undefined;
+  const where = and(
+    status ? eq(leads.status, status as LeadStatus) : undefined,
+    eq(leads.userId, userId),
+  );
 
   const [rows, totalRows] = await Promise.all([
     db.query.leads.findMany({
@@ -21,7 +30,10 @@ export async function listLeads({ status, page, limit }: ListLeadsInput) {
         },
       },
     }),
-    db.select({ total: count() }).from(leads).where(where ?? sql`1=1`),
+    db
+      .select({ total: count() })
+      .from(leads)
+      .where(where ?? sql`1=1`),
   ]);
 
   const total = Number(totalRows[0].total);
@@ -38,7 +50,14 @@ export async function getLeadStats() {
     .groupBy(leads.status);
 
   type SummaryKey = "new" | "queued" | "sent" | "replied" | "disqualified";
-  const summary = { new: 0, queued: 0, sent: 0, replied: 0, disqualified: 0, total: 0 };
+  const summary = {
+    new: 0,
+    queued: 0,
+    sent: 0,
+    replied: 0,
+    disqualified: 0,
+    total: 0,
+  };
   for (const row of rows) {
     summary[row.status as SummaryKey] = Number(row.count);
     summary.total += Number(row.count);
@@ -51,7 +70,8 @@ export async function getLead(id: number) {
     where: eq(leads.id, id),
     with: { emailLogs: { orderBy: desc(emailLogs.sentAt) } },
   });
-  if (!lead) throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
+  if (!lead)
+    throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
   return lead;
 }
 
@@ -66,7 +86,8 @@ export async function patchLead(id: number, data: PatchLeadInput) {
     .set(updateData)
     .where(eq(leads.id, id))
     .returning();
-  if (!lead) throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
+  if (!lead)
+    throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
   return lead;
 }
 

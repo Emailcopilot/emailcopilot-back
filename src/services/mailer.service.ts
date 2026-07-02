@@ -7,12 +7,30 @@ import {
   copilots,
   copilotLeadsTable,
   leads2Table,
-  subscriptions,
-  users,
 } from "../db/schema";
-import { eq, gte, and, count, inArray, sql, or } from "drizzle-orm";
+import {
+  eq,
+  gte,
+  and,
+  count,
+  inArray,
+  sql,
+  or,
+  asc,
+  isNotNull,
+  ne,
+} from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
+import {
+  getActiveSubscription,
+  getCopilotProgress,
+  getLastCopilotSendAt,
+  getRunningCopilots,
+  pauseCopilot,
+  setCopilotActive,
+  syncCopilotsDailyStatus,
+} from "./copilot-lifecycle.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface SmtpConfig {
@@ -139,7 +157,9 @@ function createTransporter(config: SmtpConfig) {
   });
 }
 
-function interpolate(text: string, lead: Lead, sendName: string): string {
+type LeadLike = Pick<Lead, "companyName" | "email" | "website" | "phone">;
+
+function interpolate(text: string, lead: LeadLike, sendName: string): string {
   return text
     .replace(/{{companyName}}/g, lead.companyName ?? "")
     .replace(/{{email}}/g, lead.email ?? "")
@@ -147,6 +167,10 @@ function interpolate(text: string, lead: Lead, sendName: string): string {
     .replace(/{{phone}}/g, lead.phone ?? "")
     .replace(/{{senderName}}/g, sendName);
 }
+
+const MIN_SEND_INTERVAL_MS = 2 * 60 * 1000;
+const MAX_SEND_INTERVAL_MS = 5 * 60 * 1000;
+const IDLE_POLL_MS = 30 * 1000;
 
 // ─── Core send ────────────────────────────────────────────────────────────────
 async function sendEmail(
@@ -323,81 +347,194 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const randomBetween = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
-// ─── Periodic send ──────────────────────────────────────────────────────────────────────
-async function periodicSend(): Promise<void> {
-  console.log("📧 Periodic send job started...");
-  const copilotLeadsData = await db
-    .select()
-    .from(copilotLeadsTable)
-    .leftJoin(leads2Table, eq(copilotLeadsTable.leadId, leads2Table.id))
-    .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id))
-    .leftJoin(emailTemplates, eq(copilots.templateId, emailTemplates.id))
-    .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
-    .leftJoin(users, eq(copilots.userId, users.id))
-    .where(eq(copilotLeadsTable.status, "new"));
+// ─── Periodic send ────────────────────────────────────────────────────────────
 
-  for (const copilotLead of copilotLeadsData) {
-    console.log(
-      `📧 Sending email to ${copilotLead.leads2!.email} (${copilotLead.leads2!.companyName})`,
-    );
+async function sendCopilotLead(
+  copilotId: number,
+  copilotLeadId: number,
+  lead: LeadLike,
+  template: EmailTemplate,
+): Promise<SendResult> {
+  try {
+    const config = await getCopilotSmtpConfig(copilotId);
+    const transporter = createTransporter(config);
+    const subject = interpolate(template.subject ?? "", lead, config.sendName);
+    const body = interpolate(template.body ?? "", lead, config.sendName);
 
-    const monthlySentEmail = await db.$count(
-      emailLogs,
-      and(
-        eq(emailLogs.status, "sent"),
-        gte(
-          emailLogs.sentAt,
-          new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-        ),
-      ),
-    );
-
-    const [subscription] = await db
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, copilotLead.users!.id));
-
-    if (!subscription) {
-      console.log(
-        `❌ No subscription found for user ${copilotLead.users!.email}`,
-      );
-      continue;
-    }
+    await transporter.sendMail({
+      from: `"${config.sendName}" <${config.email}>`,
+      to: lead.email as string,
+      subject,
+      text: body,
+    });
 
     await db.transaction(async (tx) => {
       await tx
         .update(copilotLeadsTable)
         .set({ status: "sent", sentAt: new Date() })
-        .where(eq(copilotLeadsTable.id, copilotLead.copilot_leads.id));
+        .where(eq(copilotLeadsTable.id, copilotLeadId));
 
-      const config = await getCopilotSmtpConfig(copilotLead.copilots!.id);
-      const transporter = createTransporter(config);
-      const subject = interpolate(
-        copilotLead.email_templates!.subject ?? "",
-        copilotLead.leads2!,
-        config.sendName,
-      );
-      const body = interpolate(
-        copilotLead.email_templates!.body ?? "",
-        copilotLead.leads2!,
-        config.sendName,
-      );
-
-      await transporter.sendMail({
-        from: `"${config.sendName}" <${config.email}>`,
-        to: copilotLead.leads2!.email as string,
-        subject,
-        text: body,
-      });
-      console.log(
-        `✅ Email sent to ${copilotLead.leads2!.email} (${copilotLead.leads2!.companyName})`,
-      );
+      await tx
+        .update(copilots)
+        .set({
+          emailsSent: sql`${copilots.emailsSent} + 1`,
+          lastRunAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(copilots.id, copilotId));
     });
+
+    console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+
+    await db
+      .update(copilotLeadsTable)
+      .set({
+        status: "failed",
+        failedAt: new Date(),
+        errorMessage: message,
+      })
+      .where(eq(copilotLeadsTable.id, copilotLeadId));
+
+    console.error(`❌ Failed to send to ${lead.email}: ${message}`);
+    return { success: false, error: message };
   }
-  console.log("✅ Periodic send job complete.");
+}
+
+async function canSendForCopilot(copilotId: number): Promise<boolean> {
+  const lastSentAt = await getLastCopilotSendAt(copilotId);
+  if (!lastSentAt) {
+    return true;
+  }
+
+  const elapsed = Date.now() - lastSentAt.getTime();
+  return elapsed >= MIN_SEND_INTERVAL_MS;
+}
+
+async function periodicSend(): Promise<boolean> {
+  await syncCopilotsDailyStatus();
+
+  const runningCopilots = await getRunningCopilots();
+
+  if (runningCopilots.length === 0) {
+    return false;
+  }
+
+  for (const copilot of runningCopilots) {
+    const subscription = await getActiveSubscription(copilot.userId);
+
+    if (!subscription) {
+      await pauseCopilot(copilot.id, "No active subscription");
+      continue;
+    }
+
+    if (subscription.remainingEmails <= 0) {
+      await pauseCopilot(copilot.id, "Monthly email limit reached");
+      continue;
+    }
+
+    const progress = await getCopilotProgress(copilot, subscription);
+
+    if (progress.dailyLimitReached) {
+      await setCopilotActive(copilot.id);
+      continue;
+    }
+
+    if (!(await canSendForCopilot(copilot.id))) {
+      continue;
+    }
+
+    const [pendingLead] = await db
+      .select({
+        copilotLeadId: copilotLeadsTable.id,
+        lead: leads2Table,
+      })
+      .from(copilotLeadsTable)
+      .innerJoin(leads2Table, eq(copilotLeadsTable.leadId, leads2Table.id))
+      .where(
+        and(
+          eq(copilotLeadsTable.copilotId, copilot.id),
+          eq(copilotLeadsTable.status, "new"),
+          isNotNull(leads2Table.email),
+          ne(leads2Table.email, ""),
+        ),
+      )
+      .orderBy(asc(copilotLeadsTable.createdAt))
+      .limit(1);
+
+    if (!pendingLead?.lead.email) {
+      continue;
+    }
+
+    let template: EmailTemplate;
+    try {
+      template = await getCopilotTemplate(copilot.id);
+    } catch {
+      await pauseCopilot(copilot.id, "No email template configured");
+      continue;
+    }
+
+    try {
+      await getCopilotSmtpConfig(copilot.id);
+    } catch {
+      await pauseCopilot(copilot.id, "Email profile not configured");
+      continue;
+    }
+
+    console.log(
+      `📧 Sending email for copilot ${copilot.id} to ${pendingLead.lead.email} (${pendingLead.lead.companyName})`,
+    );
+
+    await sendCopilotLead(
+      copilot.id,
+      pendingLead.copilotLeadId,
+      pendingLead.lead,
+      template,
+    );
+
+    const afterSend = await getCopilotProgress(copilot, subscription);
+    if (afterSend.dailyLimitReached) {
+      await setCopilotActive(copilot.id);
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 export function periodicSendScheduler() {
-  periodicSend().catch(console.error);
-  setInterval(periodicSend, 1000 * 60 * 1);
+  const scheduleNext = (delayMs?: number) => {
+    const waitMs =
+      delayMs ?? randomBetween(MIN_SEND_INTERVAL_MS, MAX_SEND_INTERVAL_MS);
+
+    setTimeout(async () => {
+      try {
+        const sent = await periodicSend();
+        scheduleNext(
+          sent
+            ? randomBetween(MIN_SEND_INTERVAL_MS, MAX_SEND_INTERVAL_MS)
+            : IDLE_POLL_MS,
+        );
+      } catch (error) {
+        console.error("❌ Periodic send error:", error);
+        scheduleNext(IDLE_POLL_MS);
+      }
+    }, waitMs);
+  };
+
+  periodicSend()
+    .then((sent) =>
+      scheduleNext(
+        sent
+          ? randomBetween(MIN_SEND_INTERVAL_MS, MAX_SEND_INTERVAL_MS)
+          : IDLE_POLL_MS,
+      ),
+    )
+    .catch((error) => {
+      console.error("❌ Periodic send error:", error);
+      scheduleNext(IDLE_POLL_MS);
+    });
 }

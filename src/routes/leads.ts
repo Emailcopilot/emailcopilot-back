@@ -11,24 +11,36 @@ leadsRouter.get(
   validate(listLeadsSchema, "query"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await leadService.listLeads(req.query as any));
-    } catch (err) { next(err); }
-  }
+      res.json(await leadService.listLeads(req.query as any, req.dbUser.id));
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 // GET /leads/stats/summary — must be before /:id
-leadsRouter.get("/stats/summary", async (_req: Request, res: Response, next: NextFunction) => {
-  try {
-    res.json(await leadService.getLeadStats());
-  } catch (err) { next(err); }
-});
+leadsRouter.get(
+  "/stats/summary",
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await leadService.getLeadStats());
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // GET /leads/:id
-leadsRouter.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    res.json(await leadService.getLead(parseInt(req.params.id)));
-  } catch (err) { next(err); }
-});
+leadsRouter.get(
+  "/:id",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await leadService.getLead(parseInt(req.params.id)));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // PATCH /leads/:id
 leadsRouter.patch(
@@ -37,14 +49,21 @@ leadsRouter.patch(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       res.json(await leadService.patchLead(parseInt(req.params.id), req.body));
-    } catch (err) { next(err); }
-  }
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 // DELETE /leads/:id
-leadsRouter.delete("/:id", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    await leadService.deleteLead(parseInt(req.params.id));
-    res.json({ success: true });
-  } catch (err) { next(err); }
-});
+leadsRouter.delete(
+  "/:id",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await leadService.deleteLead(parseInt(req.params.id));
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);

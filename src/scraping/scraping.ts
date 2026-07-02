@@ -1,11 +1,10 @@
 import BrowserManager from "./browserManager";
 import {
-  installPlaywrightCloseGuard,
+  ensurePlaywrightCloseGuard,
+  shouldSkipWebsite,
   WebsiteEmailCrawler,
 } from "./scrapingWebsiteEmail";
 import type { Browser, Locator, Page } from "playwright";
-
-installPlaywrightCloseGuard();
 
 export type GoogleMapsListing = {
   name: string | null;
@@ -105,6 +104,43 @@ function cleanLabel(value: string | null, prefixes: string[]) {
   return cleaned.trim() || null;
 }
 
+function cleanMapsText(value: string | null | undefined) {
+  if (!value) return null;
+  return (
+    value
+      .trim()
+      .replace(/[\uE000-\uF8FF]/g, "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\u202C|\u202D|\u202E/g, "")
+      .replace(/[▶►•▪·]/g, "")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
+}
+
+function parseAddressFromCardLines(lines: string[]) {
+  for (const line of lines.slice(1)) {
+    if (/^\d+(\.\d+)?$/.test(line)) continue;
+    if (/^\([\d,]+\)$/.test(line)) continue;
+    if (/^(open|closes|closed)\b/i.test(line)) continue;
+
+    if (line.includes("·")) {
+      const addressPart = line
+        .split("·")
+        .map((part) => part.trim())
+        .find((part) => /\d/.test(part) && /[a-zA-Z]{2,}/.test(part));
+      if (addressPart) return addressPart;
+      continue;
+    }
+
+    if ((/,/.test(line) || /^\d+/.test(line)) && /[a-zA-Z]{2,}/.test(line)) {
+      return line;
+    }
+  }
+
+  return null;
+}
+
 async function scrapeDetailPanel(page: Page) {
   await page.waitForSelector('h1.DUwDvf, button[data-item-id="address"]', {
     timeout: 10000,
@@ -132,59 +168,43 @@ async function scrapeDetailPanel(page: Page) {
     ["Website", "Site Web", "Site web"],
   );
 
-  return { website, phone };
-}
+  const getText = async (selector: string) => {
+    const el = page.locator(selector).first();
+    return (await el.isVisible().catch(() => false))
+      ? await el.textContent()
+      : null;
+  };
 
-async function closeDetailPanel(page: Page) {
-  const backButton = page.locator('button[aria-label="Back"]').first();
-  if (await backButton.isVisible({ timeout: 500 }).catch(() => false)) {
-    await backButton.click();
-    await page.waitForTimeout(500);
-    return;
-  }
-  await page.keyboard.press("Escape").catch(() => {});
-  await page.waitForTimeout(300);
+  const addressSnippet = cleanMapsText(
+    cleanLabel(
+      (await getText('button[data-item-id="address"]')) ||
+        (await getAttr('button[data-item-id="address"]', "aria-label")),
+      ["Address", "Adresse"],
+    ),
+  );
+
+  return { website, phone, addressSnippet };
 }
 
 async function scrapeListingDetails(
   page: Page,
   link: Locator,
   card: GoogleMapsCard,
-): Promise<Pick<GoogleMapsListing, "website" | "phone">> {
+): Promise<Pick<GoogleMapsListing, "website" | "phone" | "addressSnippet">> {
   try {
     await link.scrollIntoViewIfNeeded();
     await link.click();
     await page.waitForTimeout(1500);
-    const details = await scrapeDetailPanel(page);
-    await closeDetailPanel(page);
-    return details;
+    return await scrapeDetailPanel(page);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`Failed to scrape details (${card.name}): ${message}`);
-    await closeDetailPanel(page).catch(() => {});
-    return { website: null, phone: null };
+    return { website: null, phone: null, addressSnippet: null };
   }
-}
-
-async function isEndOfList(page: Page) {
-  return page
-    .locator(
-      '[role="feed"] span:has-text("end of list"), [role="feed"] span:has-text("You\'ve reached the end")',
-    )
-    .first()
-    .isVisible({ timeout: 500 })
-    .catch(() => false);
 }
 
 async function scrollFeedForMore(feed: Locator, page: Page) {
-  await feed
-    .click({ position: { x: 20, y: 200 }, force: true })
-    .catch(() => {});
-
-  for (let step = 0; step < 3; step++) {
-    await feed.evaluate((el) => el.scrollBy(0, 1200)).catch(() => {});
-    await page.waitForTimeout(400);
-  }
+  await feed.evaluate((el) => el.scrollTo(0, el.scrollHeight));
 
   const lastLink = page
     .locator('div[role="feed"] a[href*="/maps/place/"]')
@@ -207,11 +227,18 @@ async function isSponsoredListing(link: Locator): Promise<boolean> {
     .catch(() => false);
 }
 
+function stripSkippedWebsite(listing: GoogleMapsListing): GoogleMapsListing {
+  if (listing.website && shouldSkipWebsite(listing.website)) {
+    return { ...listing, website: null };
+  }
+  return listing;
+}
+
 async function enrichListingWithEmail(
   emailCrawler: WebsiteEmailCrawler,
   listing: GoogleMapsListing,
 ): Promise<GoogleMapsListingWithEmail> {
-  if (!listing.website) {
+  if (!listing.website || shouldSkipWebsite(listing.website)) {
     return { ...listing, email: null };
   }
 
@@ -250,10 +277,10 @@ async function collectFilteredListings(
 
   const hasFilter = cardFeedFilter || feedsListingFilter || websiteFilter;
   const maxScrolls = hasFilter
-    ? Math.max(150, max * 20)
-    : Math.max(50, max * 3);
-  const maxStaleScrolls = hasFilter ? 25 : 10;
-  const scrollWaitMs = hasFilter ? 2500 : 1500;
+    ? Math.max(50, max * 5)
+    : Math.max(30, Math.ceil(max / 3));
+  const maxStaleScrolls = 10;
+  const scrollWaitMs = 1500;
 
   const seen = new Set<string>();
   const listings: GoogleMapsListingWithEmail[] = [];
@@ -263,37 +290,33 @@ async function collectFilteredListings(
     const links = page.locator('div[role="feed"] a[href*="/maps/place/"]');
     const total = await links.count();
     let newlyAccepted = 0;
-    let newlySeen = 0;
 
     for (let i = 0; i < total && listings.length < max; i++) {
-      if (page.isClosed()) {
-        console.warn("Google Maps page closed, stopping scan");
-        break;
-      }
-
       const link = links.nth(i);
       const href = await link.getAttribute("href");
       if (!href || seen.has(href)) continue;
+      seen.add(href);
 
-      await link.scrollIntoViewIfNeeded().catch(() => {});
-      await page.waitForTimeout(200);
-
-      if (await isSponsoredListing(link)) {
-        seen.add(href);
-        newlySeen++;
-        continue;
-      }
+      if (await isSponsoredListing(link)) continue;
 
       const card = await scrapeListingCard(link);
-      seen.add(href);
-      newlySeen++;
 
       if (feedsListingFilter && !(await feedsListingFilter(card))) continue;
 
-      const needsDetailPanel = !!(cardFeedFilter || websiteFilter);
-      const listing: GoogleMapsListing = needsDetailPanel
-        ? { ...card, ...(await scrapeListingDetails(page, link, card)) }
-        : { ...card, website: null, phone: null };
+      const needsWebsite = !!(cardFeedFilter || websiteFilter);
+      let listing: GoogleMapsListing;
+      if (needsWebsite) {
+        const details = await scrapeListingDetails(page, link, card);
+        listing = {
+          ...card,
+          ...details,
+          addressSnippet: details.addressSnippet ?? card.addressSnippet,
+        };
+      } else {
+        listing = { ...card, website: null, phone: null };
+      }
+
+      listing = stripSkippedWebsite(listing);
 
       if (cardFeedFilter && !(await cardFeedFilter(listing))) continue;
 
@@ -309,13 +332,17 @@ async function collectFilteredListings(
       if (onListing) await onListing(finalListing);
     }
 
-    return { newlyAccepted, newlySeen };
+    return newlyAccepted;
   };
 
   await scanAndCollectVisible();
 
   for (let scroll = 0; scroll < maxScrolls && listings.length < max; scroll++) {
-    if (await isEndOfList(page)) {
+    const endReached = await page
+      .locator('span:has-text("You\'ve reached the end of the list")')
+      .isVisible()
+      .catch(() => false);
+    if (endReached) {
       console.log(
         `Reached end of Google Maps list at ${listings.length}/${max}`,
       );
@@ -325,40 +352,18 @@ async function collectFilteredListings(
     const prevSeenCount = seen.size;
     await scrollFeedForMore(feed, page);
     await page.waitForTimeout(scrollWaitMs);
-    const { newlyAccepted, newlySeen } = await scanAndCollectVisible();
+    const newlyAccepted = await scanAndCollectVisible();
 
-    if (newlySeen === 0) {
+    if (newlyAccepted === 0 && seen.size === prevSeenCount) {
       staleScrolls++;
-      if (staleScrolls % 5 === 0 && listings.length < max) {
-        for (let burst = 0; burst < 4; burst++) {
-          await feed.evaluate((el) => el.scrollBy(0, 2000)).catch(() => {});
-          await page.waitForTimeout(600);
-        }
-      }
       if (staleScrolls >= maxStaleScrolls) {
-        if (await isEndOfList(page)) {
-          console.log(
-            `Reached end of Google Maps list at ${listings.length}/${max}`,
-          );
-        } else {
-          console.log(
-            `Feed stopped loading after ${maxStaleScrolls} scrolls at ${listings.length}/${max} (${seen.size} scanned)`,
-          );
-        }
+        console.log(
+          `No new listings after ${maxStaleScrolls} scrolls, stopping at ${listings.length}/${max}`,
+        );
         break;
       }
     } else {
       staleScrolls = 0;
-    }
-
-    if (newlyAccepted > 0) {
-      staleScrolls = 0;
-    }
-
-    if (scroll % 5 === 4) {
-      console.log(
-        `Scroll ${scroll + 1}/${maxScrolls}: ${listings.length}/${max} accepted, ${seen.size} scanned (+${seen.size - prevSeenCount} this round)`,
-      );
     }
   }
 
@@ -370,7 +375,6 @@ async function collectFilteredListings(
 }
 
 async function scrapeListingCard(link: Locator): Promise<GoogleMapsCard> {
-  await link.scrollIntoViewIfNeeded().catch(() => {});
   const cardText = (await link.innerText()).trim();
   const lines = cardText
     .split("\n")
@@ -389,8 +393,7 @@ async function scrapeListingCard(link: Locator): Promise<GoogleMapsCard> {
     category:
       lines.find((line) => !/^\d|^\(|^·/.test(line) && line !== lines[0]) ||
       null,
-    addressSnippet:
-      lines.find((line) => line.includes("·") || /\d/.test(line)) || null,
+    addressSnippet: parseAddressFromCardLines(lines),
     url,
     placeId: parsePlaceIdFromUrl(url),
   };
@@ -413,12 +416,17 @@ export async function listGoogleMapsListings({
   console.log(`Searching: ${searchTerm}`);
   console.log(`URL: ${searchUrl}`);
 
-  const context = await browser.newContext({
+  ensurePlaywrightCloseGuard();
+
+  const mapsContext = await browser.newContext({
     viewport: { width: 1400, height: 900 },
     locale: "en-US",
   });
-  const page = await context.newPage();
-  const emailCrawler = new WebsiteEmailCrawler(browser);
+  const page = await mapsContext.newPage();
+  const emailContext = await browser.newContext({
+    viewport: { width: 1400, height: 900 },
+  });
+  const emailCrawler = new WebsiteEmailCrawler(emailContext, true);
 
   try {
     await page.goto(searchUrl, {
@@ -439,7 +447,7 @@ export async function listGoogleMapsListings({
     );
   } finally {
     await emailCrawler.close();
-    await context.close();
+    await mapsContext.close();
   }
 }
 
@@ -447,9 +455,9 @@ async function main() {
   const browserManager = new BrowserManager();
   const browser = await browserManager.getBrowser(false);
   const listings = await listGoogleMapsListings({
-    keyword: "plumbing contractors",
-    city: "San Francisco",
-    country: "United States",
+    keyword: "coffee shops",
+    city: "London",
+    country: "United Kingdom",
     max: 10,
     browser,
     cardFeedFilter: (listing) => {
@@ -465,9 +473,12 @@ async function main() {
   await browserManager.closeBrowser();
   console.log(`\nCollected ${listings.length} listing(s)`);
   console.log(JSON.stringify(listings, null, 2));
+  process.exit(0);
 }
 
-const isDirectRun = process.argv[1]?.endsWith("scraping.ts");
+const isDirectRun =
+  process.argv[1]?.endsWith("scraping.ts") ||
+  process.argv[1]?.endsWith("index.js");
 if (isDirectRun) {
   main().catch((err) => {
     console.error(err.message || err);

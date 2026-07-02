@@ -235,7 +235,6 @@ export const leads2Table = pgTable("leads2", {
   address: varchar(),
   sourceQuery: varchar(),
   placeId: varchar().unique(),
-  emailScrapedAt: timestamp(),
 });
 
 export const copilotLeadStatusEnum = pgEnum("copilot_lead_status_enum", [

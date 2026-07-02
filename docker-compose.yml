@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:17.3-alpine
+    container_name: db
     restart: always
     ports:
       - "5432:5432"
@@ -10,17 +11,11 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 
   app:
-    build: . # ← Dockerfile is at root now, not ./app
-    container_name: lead-gen-app
-    restart: unless-stopped
+    build: .
+    container_name: app
+    restart: always
     ports:
       - "3001:3001"
-    env_file:
-      - .env # ← loads your env vars automatically
-    deploy:
-      resources:
-        limits:
-          memory: 1g
 
 volumes:
   db_data:

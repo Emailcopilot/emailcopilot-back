@@ -9,7 +9,9 @@ import { readFileSync, writeFileSync } from "fs";
 
 stealthChromium.use(stealthPlugin());
 
-const PAGE_GOTO_TIMEOUT_MS = 30000;
+const PAGE_GOTO_TIMEOUT_MS = 20000;
+const PAGE_EVALUATE_TIMEOUT_MS = 10000;
+const SCRAPE_SINGLE_PAGE_TIMEOUT_MS = 25000;
 const CONTEXT_CLOSE_DELAY_MS = 150;
 
 const EMAIL_REGEX = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
@@ -132,8 +134,8 @@ function launchBrowser({ headless, useStealth = false }) {
   return launcher.launch({ headless });
 }
 
-export function isPlaywrightCloseError(err: unknown) {
-  const message = err instanceof Error ? err.message : String(err);
+function isPlaywrightCloseError(err) {
+  const message = err?.message || String(err);
   return (
     message.includes("Target page, context or browser has been closed") ||
     message.includes("Browser has been closed") ||
@@ -141,11 +143,19 @@ export function isPlaywrightCloseError(err: unknown) {
   );
 }
 
-export function installPlaywrightCloseGuard() {
+function installPlaywrightCloseGuard() {
   process.on("unhandledRejection", (reason) => {
     if (isPlaywrightCloseError(reason)) return;
     throw reason;
   });
+}
+
+let closeGuardInstalled = false;
+
+export function ensurePlaywrightCloseGuard() {
+  if (closeGuardInstalled) return;
+  closeGuardInstalled = true;
+  installPlaywrightCloseGuard();
 }
 
 async function mapWithConcurrency(items, concurrency, fn) {
@@ -189,6 +199,101 @@ function getDomain(url) {
   } catch {
     return null;
   }
+}
+
+const SOCIAL_MEDIA_DOMAINS = new Set([
+  "facebook.com",
+  "fb.com",
+  "instagram.com",
+  "twitter.com",
+  "x.com",
+  "tiktok.com",
+  "linkedin.com",
+  "youtube.com",
+  "youtu.be",
+  "pinterest.com",
+  "snapchat.com",
+  "whatsapp.com",
+  "t.me",
+  "threads.net",
+  "reddit.com",
+  "tumblr.com",
+  "flickr.com",
+  "vk.com",
+  "weibo.com",
+]);
+
+const BOOKING_PLATFORM_DOMAINS = new Set([
+  "direct-book.com",
+  "opentable.com",
+  "opentable.co.uk",
+  "resy.com",
+  "bookatable.com",
+  "sevenrooms.com",
+  "toasttab.com",
+  "thefork.com",
+  "lafourchette.com",
+  "quandoo.com",
+  "yelp.com",
+  "tripadvisor.com",
+  "square.site",
+  "linktr.ee",
+  "maps.app.goo.gl",
+  "goo.gl",
+  "forms.gle",
+  "order.online",
+  "ubereats.com",
+  "deliveroo.com",
+  "just-eat.co.uk",
+  "doordash.com",
+  "grubhub.com",
+]);
+
+const SKIPPED_WEBSITE_DOMAINS = new Set([
+  ...SOCIAL_MEDIA_DOMAINS,
+  ...BOOKING_PLATFORM_DOMAINS,
+]);
+
+function matchesSkippedDomain(domain: string, skippedDomain: string) {
+  return domain === skippedDomain || domain.endsWith(`.${skippedDomain}`);
+}
+
+export function shouldSkipWebsite(url: string | null | undefined) {
+  const normalized = normalizeWebsiteUrl(url ?? "");
+  const domain = getDomain(normalized ?? url ?? "");
+  if (!domain) return false;
+
+  for (const skippedDomain of SKIPPED_WEBSITE_DOMAINS) {
+    if (matchesSkippedDomain(domain, skippedDomain)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isSocialMediaWebsite(url: string | null | undefined) {
+  const normalized = normalizeWebsiteUrl(url ?? "");
+  const domain = getDomain(normalized ?? url ?? "");
+  if (!domain) return false;
+
+  for (const socialDomain of SOCIAL_MEDIA_DOMAINS) {
+    if (matchesSkippedDomain(domain, socialDomain)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function skippedWebsiteResult(url: string) {
+  return {
+    email: null,
+    emails: [],
+    url: normalizeWebsiteUrl(url) ?? url,
+    error: "Skipped website",
+    method: "skipped",
+  };
 }
 
 function normalizeUrlKey(url) {
@@ -408,6 +513,13 @@ export async function fetchWebsiteEmail({
     };
   }
 
+  if (shouldSkipWebsite(startUrl)) {
+    return {
+      ...skippedWebsiteResult(startUrl),
+      method: "fetch",
+    };
+  }
+
   const siteDomain = getDomain(startUrl);
   const allEmails = new Set();
 
@@ -484,35 +596,57 @@ async function dismissConsent(page) {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error("Operation timed out")), ms);
+    }),
+  ]);
+}
+
 async function extractEmailsFromPage(page) {
   if (page.isClosed()) {
     return { emails: new Set(), links: [] };
   }
 
   try {
-    const pageData = await page.evaluate(() => {
-      const mailtoEmails = [];
-      for (const anchor of document.querySelectorAll('a[href*="mailto:"]')) {
-        const href = anchor.getAttribute("href") || "";
-        mailtoEmails.push(href.replace(/^mailto:/i, "").split("?")[0]);
-      }
+    const pageData = (await withTimeout(
+      page.evaluate(() => {
+        const mailtoEmails = [];
+        for (const anchor of document.querySelectorAll('a[href*="mailto:"]')) {
+          const href = anchor.getAttribute("href") || "";
+          mailtoEmails.push(href.replace(/^mailto:/i, "").split("?")[0]);
+        }
 
-      const links = [];
-      for (const anchor of document.querySelectorAll("a[href]")) {
-        links.push({
-          href: anchor.href,
-          text: (anchor.textContent || "").trim(),
-        });
-      }
+        const links = [];
+        for (const anchor of document.querySelectorAll("a[href]")) {
+          links.push({
+            href: anchor.href,
+            text: (anchor.textContent || "").trim(),
+          });
+        }
 
-      return {
-        mailtoEmails,
-        links,
-        html: document.documentElement.innerHTML,
-        text: document.body?.innerText || "",
-        title: document.title || "",
-      };
-    });
+        const html = document.documentElement.innerHTML;
+        const maxHtmlLength = 500_000;
+
+        return {
+          mailtoEmails,
+          links,
+          html:
+            html.length > maxHtmlLength ? html.slice(0, maxHtmlLength) : html,
+          text: document.body?.innerText || "",
+          title: document.title || "",
+        };
+      }),
+      PAGE_EVALUATE_TIMEOUT_MS,
+    )) as {
+      mailtoEmails: string[];
+      links: { href: string; text: string }[];
+      html: string;
+      text: string;
+      title: string;
+    };
 
     const emails = collectEmailsFromSources(
       pageData.mailtoEmails.join(" "),
@@ -668,13 +802,23 @@ async function scrapePagesInParallel(context, urls) {
   const uniqueUrls = dedupeUrls(urls);
   const results = [];
   for (const pageUrl of uniqueUrls) {
-    if (!context?.browser()?.isConnected()) break;
     results.push(await scrapeSinglePage(context, pageUrl));
   }
   return results;
 }
 
 async function scrapeSinglePage(context, url) {
+  try {
+    return await withTimeout(
+      scrapeSinglePageInner(context, url),
+      SCRAPE_SINGLE_PAGE_TIMEOUT_MS,
+    );
+  } catch {
+    return { url, emails: new Set(), links: [], loaded: false };
+  }
+}
+
+async function scrapeSinglePageInner(context, url) {
   let page;
   try {
     page = await context.newPage();
@@ -686,6 +830,7 @@ async function scrapeSinglePage(context, url) {
   } catch {
     return { url, emails: new Set(), links: [], loaded: false };
   } finally {
+    await sleep(CONTEXT_CLOSE_DELAY_MS);
     await safeClosePage(page);
   }
 }
@@ -768,6 +913,10 @@ export async function scrapeWebsiteEmail({
   maxContactPages = DEFAULT_MAX_CONTACT_PAGES,
   businessName = "",
 }) {
+  if (shouldSkipWebsite(url)) {
+    return skippedWebsiteResult(url);
+  }
+
   const fetchResult = await fetchWebsiteEmail({
     url,
     maxContactPages,
@@ -778,24 +927,24 @@ export async function scrapeWebsiteEmail({
   }
 
   const ownsContext = !context;
-  const ownsBrowser = !browser;
+  const ownsBrowser = !browser && !context;
   let activeBrowser = browser;
   let activeContext = context;
 
-  if (!activeBrowser) {
-    activeBrowser = await launchBrowser({ headless, useStealth });
-  } else if (!activeBrowser.isConnected()) {
-    return {
-      email: null,
-      emails: [],
-      url: normalizeWebsiteUrl(url) ?? url,
-      error: "Browser disconnected",
-      method: "playwright",
-    };
-  }
-
   try {
     if (!activeContext) {
+      if (!activeBrowser) {
+        activeBrowser = await launchBrowser({ headless, useStealth });
+      } else if (!activeBrowser.isConnected()) {
+        return {
+          email: null,
+          emails: [],
+          url: normalizeWebsiteUrl(url) ?? url,
+          error: "Browser disconnected",
+          method: "playwright",
+        };
+      }
+
       activeContext = await activeBrowser.newContext();
     }
 
@@ -833,7 +982,7 @@ export type WebsiteEmailResult = {
 };
 
 type CrawlWebsiteEmailOptions = {
-  browser: Browser;
+  browser?: Browser | null;
   context?: BrowserContext;
   url: string;
   businessName?: string | null;
@@ -859,11 +1008,13 @@ export async function crawlWebsiteEmail({
 }
 
 export class WebsiteEmailCrawler {
-  private context: BrowserContext | null = null;
   private readonly cache = new Map<string, WebsiteEmailResult>();
   private readonly inFlight = new Map<string, Promise<WebsiteEmailResult>>();
 
-  constructor(private readonly browser: Browser) {}
+  constructor(
+    private readonly context: BrowserContext,
+    private readonly ownsContext = false,
+  ) {}
 
   private cacheKey(url: string) {
     return normalizeUrlKey(normalizeWebsiteUrl(url) ?? url);
@@ -901,32 +1052,6 @@ export class WebsiteEmailCrawler {
     return task;
   }
 
-  private async isContextAlive(context: BrowserContext) {
-    try {
-      return this.browser.isConnected() && context.pages().length >= 0;
-    } catch {
-      return false;
-    }
-  }
-
-  private async getOrCreateContext(): Promise<BrowserContext> {
-    if (this.context && (await this.isContextAlive(this.context))) {
-      return this.context;
-    }
-
-    if (this.context) {
-      await safeCloseContext(this.context);
-      this.context = null;
-    }
-
-    if (!this.browser.isConnected()) {
-      throw new Error("Browser disconnected");
-    }
-
-    this.context = await this.browser.newContext();
-    return this.context;
-  }
-
   private async crawlUncached({
     url,
     businessName = "",
@@ -935,42 +1060,23 @@ export class WebsiteEmailCrawler {
     CrawlWebsiteEmailOptions,
     "browser" | "context"
   >): Promise<WebsiteEmailResult> {
-    try {
-      const context = await this.getOrCreateContext();
-      const result = await crawlWebsiteEmail({
-        browser: this.browser,
-        context,
-        url,
-        maxContactPages,
-        businessName,
-      });
+    const result = await crawlWebsiteEmail({
+      context: this.context,
+      url,
+      maxContactPages,
+      businessName,
+    });
 
-      this.cache.set(this.cacheKey(url), result);
-      return result;
-    } catch (err) {
-      if (isPlaywrightCloseError(err)) {
-        this.context = null;
-      }
-
-      const message = err instanceof Error ? err.message : String(err);
-      const failed: WebsiteEmailResult = {
-        email: null,
-        emails: [],
-        url: normalizeWebsiteUrl(url) ?? url,
-        error: message,
-        method: "playwright",
-      };
-      this.cache.set(this.cacheKey(url), failed);
-      return failed;
-    }
+    this.cache.set(this.cacheKey(url), result);
+    return result;
   }
 
   async close() {
-    if (this.context) {
-      await safeCloseContext(this.context);
-      this.context = null;
-    }
+    await Promise.allSettled([...this.inFlight.values()]);
     this.inFlight.clear();
+    if (this.ownsContext) {
+      await safeCloseContext(this.context);
+    }
   }
 }
 

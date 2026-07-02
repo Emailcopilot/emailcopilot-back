@@ -29,10 +29,13 @@ import {
   initScheduler,
   getSchedulerStatus,
 } from "./services/scheduler.service";
+import runScraping from "./scraping";
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
 import { db } from "./db/drizzle";
 import { subscriptions, users, copilots } from "./db/schema";
+import BrowserManager from "./scraping/browserManager";
+import morgan from "morgan";
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const app: express.Application = express();
@@ -50,6 +53,7 @@ app.use(
   }),
 );
 app.use(clerkMiddleware());
+app.use(morgan("dev"));
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 
@@ -158,7 +162,27 @@ app.listen(PORT, async () => {
   //   }
   //   console.log(`⏰ Schedulers started for ${seenUsers.size} user(s).`);
   // }
+
+  const browserManager = new BrowserManager();
+  const browser = await browserManager.getBrowser();
+
+  runScraping(browser);
   periodicSendScheduler();
+
+  process.on("SIGINT", async () => {
+    await browserManager.closeBrowser();
+    process.exit(0);
+  });
+
+  process.on("SIGTERM", async () => {
+    await browserManager.closeBrowser();
+    process.exit(0);
+  });
+
+  process.on("SIGQUIT", async () => {
+    await browserManager.closeBrowser();
+    process.exit(0);
+  });
 });
 
 export default app;

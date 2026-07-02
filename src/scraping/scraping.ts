@@ -478,7 +478,7 @@ async function main() {
 
 const isDirectRun =
   process.argv[1]?.endsWith("scraping.ts") ||
-  process.argv[1]?.endsWith("index.js");
+  process.argv[1]?.endsWith("scraping.js");
 if (isDirectRun) {
   main().catch((err) => {
     console.error(err.message || err);

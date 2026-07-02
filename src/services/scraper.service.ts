@@ -21,7 +21,8 @@ const SCRAPE_TIMEOUT = 45_000;
 const DEFAULT_RESULTS_LIMIT = 10;
 const RESULTS_PER_BATCH = 20;
 const PERIODIC_RESTART_THRESHOLD = 15;
-const IS_PROD = process.env.NODE_ENV === "production";
+// Headed mode is opt-in only (local debugging). Docker/CI have no display server.
+const PLAYWRIGHT_HEADED = process.env.PLAYWRIGHT_HEADED === "true";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const randomDelay = (min = 1500, max = 4000) =>
@@ -52,8 +53,7 @@ playwrightChromium.use(stealth());
 // ─── Browser helpers ──────────────────────────────────────────────────────────
 async function launchBrowser(): Promise<Browser> {
   return playwrightChromium.launch({
-    // headless trur in prod, false in dev for debugging (shows the browser)
-    headless: IS_PROD,
+    headless: !PLAYWRIGHT_HEADED,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",

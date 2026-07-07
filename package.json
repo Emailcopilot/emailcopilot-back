@@ -4,7 +4,7 @@
   "scripts": {
     "predev": "docker compose up -d db",
     "postdev": "docker compose down",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --include .env src/index.ts",
     "build": "node esbuild.js",
     "start": "node dist/index.js",
     "db:push": "drizzle-kit push",

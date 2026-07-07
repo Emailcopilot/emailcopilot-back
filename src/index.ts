@@ -47,7 +47,7 @@ app.use(express.urlencoded({ extended: true })); // required for Mollie webhooks
 app.use(express.json());
 app.use(
   cors({
-    origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
+    origin: process.env.ALLOWED_ORIGIN?.split(",") || "http://localhost:3000",
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -145,26 +145,6 @@ app.listen(PORT, async () => {
   console.log(`   Health check: http://localhost:${PORT}/health`);
   await migrate(db, { migrationsFolder: "./migrations" });
   console.log("✅ Migrations applied");
-
-  // Start cron jobs — only for active subscriptions, one scheduler per user
-  // (multiple subs per user would spin up duplicate jobs)
-  // const activeSubscriptions = await db
-  //   .select()
-  //   .from(subscriptions)
-  //   .where(eq(subscriptions.status, "active"));
-
-  // if (activeSubscriptions.length === 0) {
-  //   console.log("⚠️  No active subscriptions found. Scheduler not started.");
-  // } else {
-  //   // Group by userId to avoid duplicate schedulers if a user has multiple sub rows
-  //   const seenUsers = new Set<number>();
-  //   for (const sub of activeSubscriptions) {
-  //     if (seenUsers.has(sub.userId)) continue;
-  //     seenUsers.add(sub.userId);
-  //     await initScheduler(sub.userId);
-  //   }
-  //   console.log(`⏰ Schedulers started for ${seenUsers.size} user(s).`);
-  // }
 
   const browserManager = new BrowserManager();
   const browser = await browserManager.getBrowser();

@@ -9,6 +9,7 @@ import {
 } from "../db/schema";
 import type { Copilot } from "../db/schema";
 import { listGoogleMapsListings } from "./scraping";
+import BrowserManager from "./browserManager";
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
   getActiveSubscription,
@@ -284,91 +285,115 @@ async function runScrapeJob(
     .innerJoin(copilotLeadsTable, eq(copilotLeadsTable.leadId, leads2Table.id))
     .where(eq(copilotLeadsTable.copilotId, copilotId));
 
-  const listings = await listGoogleMapsListings({
-    browser,
-    keyword: searchQuery,
-    city: "",
-    country: "",
-    max: maxListings,
-    feedsListingFilter: async (card) => {
-      if (!card.placeId) {
-        return false;
-      }
-      const failedLeads = await db.$count(
-        leads2Table,
-        and(
-          eq(leads2Table.status, "fail"),
-          eq(leads2Table.placeId, card.placeId),
-        ),
-      );
-      if (failedLeads > 0) {
-        return false;
-      }
-      return !existingLeads.find((l) => l.placeId == card.placeId);
-    },
-    cardFeedFilter: async (listing) => {
-      const continueFilter = !!listing.website;
-      if (!continueFilter) {
-        await db.insert(leads2Table).values({
-          companyName: listing.name || "",
-          email: "",
-          website: "",
-          phone: listing.phone || "",
-          address: listing.addressSnippet || "",
-          sourceQuery: searchQuery,
-          placeId: listing.placeId || "",
-          status: "fail",
-        });
-      }
-      return continueFilter;
-    },
-    websiteFilter: async (listing) => {
-      const continueFilter = !!listing.email;
-      if (!continueFilter) {
-        await db.insert(leads2Table).values({
-          companyName: listing.name || "",
-          email: "",
-          website: "",
-          phone: listing.phone || "",
-          address: listing.addressSnippet || "",
-          sourceQuery: searchQuery,
-          placeId: listing.placeId || "",
-          status: "fail",
-        });
-      }
-      return continueFilter;
-    },
-    onListing: async (listing) => {
-      await db.transaction(async (tx) => {
-        const [lead] = await tx
-          .insert(leads2Table)
-          .values({
+  let listings;
+  try {
+    listings = await listGoogleMapsListings({
+      browser,
+      keyword: searchQuery,
+      city: "",
+      country: "",
+      max: maxListings,
+      feedsListingFilter: async (card) => {
+        if (!card.placeId) {
+          return false;
+        }
+        const failedLeads = await db.$count(
+          leads2Table,
+          and(
+            eq(leads2Table.status, "fail"),
+            eq(leads2Table.placeId, card.placeId),
+          ),
+        );
+        if (failedLeads > 0) {
+          return false;
+        }
+        return !existingLeads.find((l) => l.placeId == card.placeId);
+      },
+      cardFeedFilter: async (listing) => {
+        const continueFilter = !!listing.website;
+        if (!continueFilter) {
+          await db.insert(leads2Table).values({
             companyName: listing.name || "",
-            email: listing.email || "",
-            website: listing.website || "",
+            email: "",
+            website: "",
             phone: listing.phone || "",
             address: listing.addressSnippet || "",
             sourceQuery: searchQuery,
             placeId: listing.placeId || "",
-            status: "success",
-          })
-          .returning();
+            status: "fail",
+          });
+        }
+        return continueFilter;
+      },
+      websiteFilter: async (listing) => {
+        const continueFilter = !!listing.email;
+        if (!continueFilter) {
+          await db.insert(leads2Table).values({
+            companyName: listing.name || "",
+            email: "",
+            website: "",
+            phone: listing.phone || "",
+            address: listing.addressSnippet || "",
+            sourceQuery: searchQuery,
+            placeId: listing.placeId || "",
+            status: "fail",
+          });
+        }
+        return continueFilter;
+      },
+      onListing: async (listing) => {
+        await db.transaction(async (tx) => {
+          const [lead] = await tx
+            .insert(leads2Table)
+            .values({
+              companyName: listing.name || "",
+              email: listing.email || "",
+              website: listing.website || "",
+              phone: listing.phone || "",
+              address: listing.addressSnippet || "",
+              sourceQuery: searchQuery,
+              placeId: listing.placeId || "",
+              status: "success",
+            })
+            .returning();
 
-        await tx.insert(copilotLeadsTable).values({
-          copilotId,
-          leadId: lead.id,
-          status: "new",
+          await tx.insert(copilotLeadsTable).values({
+            copilotId,
+            leadId: lead.id,
+            status: "new",
+          });
+
+          await tx
+            .update(scrapeJobs)
+            .set({
+              leadsFound: sql<number>`${scrapeJobs.leadsFound} + 1`,
+            })
+            .where(eq(scrapeJobs.id, runningJob.id));
         });
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const [jobState] = await db
+      .select({ leadsFound: scrapeJobs.leadsFound })
+      .from(scrapeJobs)
+      .where(eq(scrapeJobs.id, runningJob.id))
+      .limit(1);
 
-        await tx
-          .update(scrapeJobs)
-          .set({
-            leadsFound: sql<number>`${scrapeJobs.leadsFound} + 1`,
-          })
-          .where(eq(scrapeJobs.id, runningJob.id));
+    if (jobState && jobState.leadsFound > 0) {
+      console.log(
+        `⚠️ Scrape job ${runningJob.id} ended with error after finding ${jobState.leadsFound} lead(s)`,
+      );
+      await stopScrapeJob({
+        scrapeJobId: runningJob.id,
+        status: "done",
+        errorMessage: message,
       });
-    },
-  });
+      return;
+    }
+
+    throw error;
+  }
 
   if (listings.length === 0) {
     console.log(`❌ No listings found for ${searchQuery}`);
@@ -386,7 +411,7 @@ async function runScrapeJob(
   });
 }
 
-async function runScraping(browser: Browser) {
+async function runScraping(browserManager: BrowserManager) {
   console.log(`🔍 Running scraping loop ${new Date().toISOString()}`);
 
   const COPILOT_NEED_CHECK_MS = 30_000;
@@ -394,6 +419,7 @@ async function runScraping(browser: Browser) {
 
   while (true) {
     try {
+      const browser = await browserManager.getBrowser();
       let copilot = await resolveNextCopilot();
 
       if (copilot) {
@@ -416,7 +442,8 @@ async function runScraping(browser: Browser) {
         `❌ Error running scrape job ${new Date().toISOString()}:`,
         error,
       );
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await browserManager.restartBrowser();
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 }

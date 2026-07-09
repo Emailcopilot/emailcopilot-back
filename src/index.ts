@@ -148,9 +148,9 @@ app.listen(PORT, async () => {
   console.log("✅ Migrations applied");
 
   const browserManager = new BrowserManager();
-  const browser = await browserManager.getBrowser();
+  await browserManager.getBrowser();
 
-  runScraping(browser);
+  runScraping(browserManager);
   periodicSendScheduler();
 
   process.on("SIGINT", async () => {

@@ -33,6 +33,13 @@ class BrowserManager {
       this.browser = null;
     }
   }
+
+  async restartBrowser(headless = true) {
+    console.log("🔄 Restarting browser...");
+    await this.closeBrowser();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return this.getBrowser(headless);
+  }
 }
 
 export default BrowserManager;

@@ -253,6 +253,10 @@ async function scrapeListingDetails(
         timeout: 30000,
       });
       await page.waitForTimeout(1000);
+      await page
+        .locator('div[role="feed"]')
+        .waitFor({ state: "visible", timeout: 10000 })
+        .catch(() => {});
       await prepareFeedForInteraction(page);
     }
 
@@ -263,6 +267,10 @@ async function scrapeListingDetails(
     if (page.url() !== searchUrl) {
       await page
         .goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 })
+        .catch(() => {});
+      await page
+        .locator('div[role="feed"]')
+        .waitFor({ state: "visible", timeout: 10000 })
         .catch(() => {});
       await prepareFeedForInteraction(page).catch(() => {});
     }
@@ -361,44 +369,56 @@ async function collectFilteredListings(
     let newlyAccepted = 0;
 
     for (let i = 0; i < total && listings.length < max; i++) {
-      const link = links.nth(i);
-      const href = await link.getAttribute("href");
-      if (!href || seen.has(href)) continue;
-      seen.add(href);
+      try {
+        const link = links.nth(i);
+        const href = await link
+          .getAttribute("href", { timeout: LINK_ATTR_TIMEOUT_MS })
+          .catch(() => null);
+        if (!href || seen.has(href)) continue;
+        seen.add(href);
 
-      if (await isSponsoredListing(link)) continue;
+        if (await isSponsoredListing(link)) continue;
 
-      const card = await scrapeListingCard(link);
+        const card = await scrapeListingCard(link);
 
-      if (feedsListingFilter && !(await feedsListingFilter(card))) continue;
+        if (feedsListingFilter && !(await feedsListingFilter(card))) continue;
 
-      const needsWebsite = !!(cardFeedFilter || websiteFilter);
-      let listing: GoogleMapsListing;
-      if (needsWebsite) {
-        const details = await scrapeListingDetails(page, link, card, searchUrl);
-        listing = {
-          ...card,
-          ...details,
-          addressSnippet: details.addressSnippet ?? card.addressSnippet,
-        };
-      } else {
-        listing = { ...card, website: null, phone: null };
+        const needsWebsite = !!(cardFeedFilter || websiteFilter);
+        let listing: GoogleMapsListing;
+        if (needsWebsite) {
+          const details = await scrapeListingDetails(
+            page,
+            link,
+            card,
+            searchUrl,
+          );
+          listing = {
+            ...card,
+            ...details,
+            addressSnippet: details.addressSnippet ?? card.addressSnippet,
+          };
+        } else {
+          listing = { ...card, website: null, phone: null };
+        }
+
+        listing = stripSkippedWebsite(listing);
+
+        if (cardFeedFilter && !(await cardFeedFilter(listing))) continue;
+
+        const finalListing: GoogleMapsListingWithEmail = websiteFilter
+          ? await enrichListingWithEmail(emailCrawler, listing)
+          : { ...listing, email: null };
+
+        if (websiteFilter && !(await websiteFilter(finalListing))) continue;
+
+        listings.push(finalListing);
+        newlyAccepted++;
+        console.log(`[${listings.length}/${max}] ${finalListing.name}`);
+        if (onListing) await onListing(finalListing);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`Skipping listing at index ${i}: ${message}`);
       }
-
-      listing = stripSkippedWebsite(listing);
-
-      if (cardFeedFilter && !(await cardFeedFilter(listing))) continue;
-
-      const finalListing: GoogleMapsListingWithEmail = websiteFilter
-        ? await enrichListingWithEmail(emailCrawler, listing)
-        : { ...listing, email: null };
-
-      if (websiteFilter && !(await websiteFilter(finalListing))) continue;
-
-      listings.push(finalListing);
-      newlyAccepted++;
-      console.log(`[${listings.length}/${max}] ${finalListing.name}`);
-      if (onListing) await onListing(finalListing);
     }
 
     return newlyAccepted;
@@ -443,14 +463,16 @@ async function collectFilteredListings(
   return listings;
 }
 
+const LINK_ATTR_TIMEOUT_MS = 5000;
+
 async function scrapeListingCard(link: Locator): Promise<GoogleMapsCard> {
-  const cardText = (await link.innerText()).trim();
+  const cardText = ((await link.innerText({ timeout: LINK_ATTR_TIMEOUT_MS }).catch(() => "")) || "").trim();
   const lines = cardText
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const href = await link.getAttribute("href");
+  const href = await link.getAttribute("href", { timeout: LINK_ATTR_TIMEOUT_MS }).catch(() => null);
   const url = toAbsoluteMapsUrl(href);
 
   return {

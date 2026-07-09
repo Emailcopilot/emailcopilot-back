@@ -45,16 +45,17 @@ const PORT = process.env.PORT || 3001;
 // ─── Global middleware ────────────────────────────────────────────────────────
 app.use(express.urlencoded({ extended: true })); // required for Mollie webhooks
 app.use(express.json());
+const origin = process.env.ALLOWED_ORIGIN?.split(",");
 app.use(
   cors({
-    origin: process.env.ALLOWED_ORIGIN?.split(",") || "http://localhost:3000",
+    origin: origin || "http://localhost:3000",
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   }),
 );
 app.use(clerkMiddleware());
-app.use(morgan("dev"));
+app.use(morgan("combined"));
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 

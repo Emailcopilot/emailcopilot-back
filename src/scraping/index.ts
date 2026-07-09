@@ -287,8 +287,8 @@ async function runScrapeJob(
   const listings = await listGoogleMapsListings({
     browser,
     keyword: searchQuery,
-    city: (scrapeProfile as { city?: string }).city || "",
-    country: (scrapeProfile as { country?: string }).country || "",
+    city: "",
+    country: "",
     max: maxListings,
     feedsListingFilter: async (card) => {
       if (!card.placeId) {

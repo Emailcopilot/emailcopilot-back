@@ -51,11 +51,14 @@ type ListGoogleMapsListingsOptions = {
 };
 
 function buildSearchLocation(city: string, country: string) {
-  return `${city}, ${country}`;
+  return [city.trim(), country.trim()].filter(Boolean).join(", ");
 }
 
 function buildSearchTerm(keyword: string, city: string, country: string) {
-  return `${keyword} in ${buildSearchLocation(city, country)}`;
+  const location = buildSearchLocation(city, country);
+  const trimmedKeyword = keyword.trim();
+  if (!location) return trimmedKeyword;
+  return `${trimmedKeyword} in ${location}`;
 }
 
 function parsePlaceNameFromUrl(url: string | null | undefined) {
@@ -186,19 +189,83 @@ async function scrapeDetailPanel(page: Page) {
   return { website, phone, addressSnippet };
 }
 
+async function prepareFeedForInteraction(page: Page) {
+  await page
+    .addStyleTag({
+      content: `
+        div[role="feed"] img,
+        div[role="feed"] .bfdHYd {
+          pointer-events: none !important;
+        }
+      `,
+    })
+    .catch(() => {});
+}
+
+async function openListingDetail(page: Page, link: Locator) {
+  await link.scrollIntoViewIfNeeded().catch(() => {});
+
+  const clickStrategies = [
+    () => link.click({ timeout: 8000 }),
+    () => link.click({ force: true, timeout: 5000 }),
+    () =>
+      link.evaluate((el) => {
+        (el as HTMLAnchorElement).click();
+      }),
+  ];
+
+  for (const click of clickStrategies) {
+    try {
+      await click();
+      return;
+    } catch {
+      continue;
+    }
+  }
+
+  const href = await link.getAttribute("href");
+  const placeUrl = toAbsoluteMapsUrl(href);
+  if (!placeUrl) {
+    throw new Error("Could not open listing detail panel");
+  }
+
+  await page.goto(placeUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
+}
+
 async function scrapeListingDetails(
   page: Page,
   link: Locator,
   card: GoogleMapsCard,
+  searchUrl: string,
 ): Promise<Pick<GoogleMapsListing, "website" | "phone" | "addressSnippet">> {
   try {
-    await link.scrollIntoViewIfNeeded();
-    await link.click();
+    const urlBefore = page.url();
+    await openListingDetail(page, link);
     await page.waitForTimeout(1500);
-    return await scrapeDetailPanel(page);
+    const details = await scrapeDetailPanel(page);
+
+    if (page.url() !== urlBefore) {
+      await page.goto(searchUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 30000,
+      });
+      await page.waitForTimeout(1000);
+      await prepareFeedForInteraction(page);
+    }
+
+    return details;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`Failed to scrape details (${card.name}): ${message}`);
+    if (page.url() !== searchUrl) {
+      await page
+        .goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 })
+        .catch(() => {});
+      await prepareFeedForInteraction(page).catch(() => {});
+    }
     return { website: null, phone: null, addressSnippet: null };
   }
 }
@@ -267,6 +334,7 @@ async function collectFilteredListings(
   page: Page,
   emailCrawler: WebsiteEmailCrawler,
   max: number,
+  searchUrl: string,
   cardFeedFilter?: CardFeedFilter,
   feedsListingFilter?: FeedsListingFilter,
   websiteFilter?: WebsiteFilter,
@@ -274,6 +342,7 @@ async function collectFilteredListings(
 ) {
   const feed = page.locator('div[role="feed"]');
   await feed.waitFor({ state: "visible", timeout: 15000 });
+  await prepareFeedForInteraction(page);
 
   const hasFilter = cardFeedFilter || feedsListingFilter || websiteFilter;
   const maxScrolls = hasFilter
@@ -306,7 +375,7 @@ async function collectFilteredListings(
       const needsWebsite = !!(cardFeedFilter || websiteFilter);
       let listing: GoogleMapsListing;
       if (needsWebsite) {
-        const details = await scrapeListingDetails(page, link, card);
+        const details = await scrapeListingDetails(page, link, card, searchUrl);
         listing = {
           ...card,
           ...details,
@@ -440,6 +509,7 @@ export async function listGoogleMapsListings({
       page,
       emailCrawler,
       max,
+      searchUrl,
       cardFeedFilter,
       feedsListingFilter,
       websiteFilter,

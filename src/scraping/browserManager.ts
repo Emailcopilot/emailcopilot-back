@@ -9,7 +9,20 @@ class BrowserManager {
 
   async getBrowser(headless = true) {
     if (!this.browser) {
-      this.browser = await chromium.launch({ headless });
+      const headed = process.env.PLAYWRIGHT_HEADED === "true";
+      this.browser = await chromium.launch({
+        headless: headed ? false : headless,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--no-zygote",
+          "--disable-extensions",
+          "--disable-software-rasterizer",
+          "--disable-blink-features=AutomationControlled",
+        ],
+      });
     }
     return this.browser;
   }

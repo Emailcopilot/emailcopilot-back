@@ -29,11 +29,12 @@ async function resolveUser(
 }
 
 // ─── Users ─────────────────────────────────────────────
-// GET    /api/users
-// GET    /api/users/:id
-// POST   /api/users
-// PUT    /api/users/:id
-// DELETE /api/users/:id
+// GET    /users
+// GET    /users/:id
+// POST   /users
+// POST   /users/webhook
+// PUT    /users/:id
+// DELETE /users/:id
 
 usersRouter.get("/", async (req: Request, res: Response) => {
   try {

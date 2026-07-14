@@ -25,6 +25,7 @@ jobs:
         run: |
           cat <<EOF > .env
           PORT=${{ vars.PORT }}
+          ALLOWED_ORIGIN=${{ vars.ALLOWED_ORIGIN }}
           NODE_ENV=${{ vars.NODE_ENV }}
           WEBHOOK_URL=${{ vars.WEBHOOK_URL }}
           CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}

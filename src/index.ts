@@ -46,6 +46,7 @@ const PORT = process.env.PORT || 3001;
 app.use(express.urlencoded({ extended: true })); // required for Mollie webhooks
 app.use(express.json());
 const origin = process.env.ALLOWED_ORIGIN?.split(",");
+console.log("origin", origin);
 app.use(
   cors({
     origin: origin || "http://localhost:3000",

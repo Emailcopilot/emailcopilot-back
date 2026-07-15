@@ -18,6 +18,7 @@ import {
   periodicCopilotNeedCheck,
   setCopilotActive,
   resolveNextCopilot,
+  completeCopilot,
 } from "../services/copilot-lifecycle.service";
 import type { CopilotProgress } from "../services/copilot-lifecycle.service";
 
@@ -402,6 +403,7 @@ async function runScrapeJob(
       status: "done",
       errorMessage: "No listings found",
     });
+    await completeCopilot(copilotId);
     return;
   }
 

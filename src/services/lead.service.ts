@@ -1,6 +1,7 @@
+import { copilotLeadsTable, copilots, leads2Table } from "./../db/schema";
 import { db } from "../db/drizzle";
 import { leads, emailLogs } from "../db/schema";
-import { eq, desc, count, sql, and } from "drizzle-orm";
+import { eq, desc, count, sql, and, getTableColumns } from "drizzle-orm";
 import type { LeadStatus } from "../db/types";
 import type {
   PatchLeadInput,
@@ -11,32 +12,31 @@ export async function listLeads(
   { status, page, limit }: ListLeadsInput,
   userId: number,
 ) {
+  // console.log("listLeads", status, page, limit, userId);
   const offset = (page - 1) * limit;
   const where = and(
-    status ? eq(leads.status, status as LeadStatus) : undefined,
-    eq(leads.userId, userId),
+    // status ? eq(leads2Table.status, status as LeadStatus2) : undefined,
+    eq(copilots.userId, userId),
   );
 
-  const [rows, totalRows] = await Promise.all([
-    db.query.leads.findMany({
-      where,
-      orderBy: desc(leads.scrapedAt),
-      limit,
-      offset,
-      with: {
-        emailLogs: {
-          orderBy: desc(emailLogs.sentAt),
-          limit: 1,
-        },
-      },
-    }),
+  const query = () =>
     db
-      .select({ total: count() })
-      .from(leads)
-      .where(where ?? sql`1=1`),
+      .select({
+        ...getTableColumns(leads2Table),
+      })
+      .from(leads2Table)
+      .leftJoin(copilotLeadsTable, eq(leads2Table.id, copilotLeadsTable.leadId))
+      .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id))
+      .where(where);
+
+  const [rows, total] = await Promise.all([
+    query()
+      .orderBy(desc(copilotLeadsTable.createdAt))
+      .offset(offset)
+      .limit(limit),
+    db.$count(query()),
   ]);
 
-  const total = Number(totalRows[0].total);
   return {
     data: rows,
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
@@ -66,10 +66,15 @@ export async function getLeadStats() {
 }
 
 export async function getLead(id: number) {
-  const lead = await db.query.leads.findFirst({
-    where: eq(leads.id, id),
-    with: { emailLogs: { orderBy: desc(emailLogs.sentAt) } },
-  });
+  const [lead] = await db
+    .select({
+      ...getTableColumns(leads2Table),
+    })
+    .from(leads2Table)
+    .where(and(eq(leads2Table.id, id)))
+    .leftJoin(copilotLeadsTable, eq(leads2Table.id, copilotLeadsTable.leadId))
+    .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id));
+
   if (!lead)
     throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
   return lead;

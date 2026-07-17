@@ -9,7 +9,10 @@ import type {
 } from "../validators/email-profile.validator";
 
 export async function listEmailProfiles(userId: number) {
-  return db.select().from(emailProfiles).where(eq(emailProfiles.userId, userId));
+  return db
+    .select()
+    .from(emailProfiles)
+    .where(eq(emailProfiles.userId, userId));
 }
 
 export async function getEmailProfile(id: number, userId: number) {
@@ -17,14 +20,17 @@ export async function getEmailProfile(id: number, userId: number) {
     .select()
     .from(emailProfiles)
     .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
-  if (!row) throw Object.assign(new Error("Email profile not found"), { statusCode: 404 });
+  if (!row)
+    throw Object.assign(new Error("Email profile not found"), {
+      statusCode: 404,
+    });
   return row;
 }
 
 export async function createEmailProfile(
   userId: number,
   subscriptionId: number,
-  data: CreateEmailProfileInput
+  data: CreateEmailProfileInput,
 ) {
   const [created] = await db
     .insert(emailProfiles)
@@ -37,14 +43,17 @@ export async function createEmailProfile(
 export async function updateEmailProfile(
   id: number,
   userId: number,
-  data: UpdateEmailProfileInput
+  data: UpdateEmailProfileInput,
 ) {
   const [updated] = await db
     .update(emailProfiles)
     .set({ ...data, updatedAt: new Date() })
     .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)))
     .returning();
-  if (!updated) throw Object.assign(new Error("Email profile not found"), { statusCode: 404 });
+  if (!updated)
+    throw Object.assign(new Error("Email profile not found"), {
+      statusCode: 404,
+    });
   return updated;
 }
 
@@ -58,20 +67,36 @@ export async function deleteEmailProfile(id: number, userId: number) {
  * Verifies the SMTP config stored in the given profile (not global settings).
  * Updates the profile status based on the result.
  */
-export async function verifyEmailProfile(id: number, userId: number): Promise<SendResult> {
+export async function verifyEmailProfile(
+  id: number,
+  userId: number,
+): Promise<SendResult> {
   const [profile] = await db
     .select()
     .from(emailProfiles)
     .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
-  if (!profile) throw Object.assign(new Error("Email profile not found"), { statusCode: 404 });
+  if (!profile)
+    throw Object.assign(new Error("Email profile not found"), {
+      statusCode: 404,
+    });
 
   // Validate SMTP config exists before testing
   if (!profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw Object.assign(
-      new Error("SMTP configuration incomplete. smtpHost, email, and smtpPass are required."),
-      { statusCode: 400 }
+      new Error(
+        "SMTP configuration incomplete. smtpHost, email, and smtpPass are required.",
+      ),
+      { statusCode: 400 },
     );
   }
+
+  console.log("Testing SMTP connection to:", {
+    host: profile.smtpHost,
+    port: profile.smtpPort ?? 587,
+    email: profile.email,
+    pass: profile.smtpPass,
+    sendName: profile.sendName ?? profile.email,
+  });
 
   // Pass the profile's own SMTP config to the tester
   const result = await testSmtpConnection({
@@ -82,10 +107,16 @@ export async function verifyEmailProfile(id: number, userId: number): Promise<Se
     sendName: profile.sendName ?? profile.email,
   });
 
+  console.log("SMTP connection result:", result);
+
   if (result.success) {
     await db
       .update(emailProfiles)
-      .set({ status: "active", lastVerifiedAt: new Date(), updatedAt: new Date() })
+      .set({
+        status: "active",
+        lastVerifiedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
   } else {
     await db

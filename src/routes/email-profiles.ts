@@ -68,7 +68,6 @@ emailProfilesRouter.put(
       );
       res.json(updated);
     } catch (err) {
-      console.error(err);
       next(err);
     }
   },
@@ -101,6 +100,7 @@ emailProfilesRouter.post(
       );
       res.json(result);
     } catch (err) {
+      console.error(err);
       next(err);
     }
   },

@@ -261,7 +261,7 @@ billingRouter.post(
         customerId: mollieCustomerId,
         sequenceType: SequenceType.first,
         description: `${plan.name} plan – first payment`,
-        redirectUrl: `${process.env.WEBHOOK_URL}/dashboard`,
+        redirectUrl: `${process.env.FRONTEND_URL}/dashboard`,
         webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
         metadata: { planId, userId: String(user.id) },
       });

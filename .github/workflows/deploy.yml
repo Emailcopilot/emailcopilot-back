@@ -28,8 +28,8 @@ jobs:
           ALLOWED_ORIGIN=${{ vars.ALLOWED_ORIGIN }}
           NODE_ENV=${{ vars.NODE_ENV }}
           WEBHOOK_URL=${{ vars.WEBHOOK_URL }}
-          CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
           FRONTEND_URL=${{ vars.FRONTEND_URL }}
+          CLERK_PUBLISHABLE_KEY=${{ vars.CLERK_PUBLISHABLE_KEY }}
           MOLLIE_API_KEY=${{ secrets.MOLLIE_API_KEY }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}

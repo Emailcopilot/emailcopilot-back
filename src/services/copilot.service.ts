@@ -1,6 +1,15 @@
 import { db } from "../db/drizzle";
-import { copilots, subscriptions, scrapeProfiles, emailProfiles, emailTemplates, scrapeJobs, emailLogs, leads } from "../db/schema";
-import { and, desc, eq, gte, count } from "drizzle-orm";
+import {
+  copilots,
+  subscriptions,
+  scrapeProfiles,
+  emailProfiles,
+  emailTemplates,
+  scrapeJobs,
+  emailLogs,
+  leads,
+} from "../db/schema";
+import { and, desc, eq, gte, count, getTableColumns } from "drizzle-orm";
 import { sendPendingLeads } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
 import { incrementUsage } from "../lib/helpers";
@@ -17,7 +26,10 @@ async function getActiveSubscription(userId: number) {
     .where(eq(subscriptions.userId, userId))
     .orderBy(desc(subscriptions.createdAt));
   const sub = subs[0];
-  if (!sub) throw Object.assign(new Error("No subscription found"), { statusCode: 404 });
+  if (!sub)
+    throw Object.assign(new Error("No subscription found"), {
+      statusCode: 404,
+    });
   return sub;
 }
 
@@ -46,15 +58,14 @@ async function validateCopilotCanActivate(copilotId: number) {
   if (errors.length > 0) {
     throw Object.assign(
       new Error(`Cannot activate copilot. Missing: ${errors.join(", ")}`),
-      { statusCode: 400 }
+      { statusCode: 400 },
     );
   }
 
   if (!copilot.emailProfileId) {
-    throw Object.assign(
-      new Error("Email profile is not properly configured"),
-      { statusCode: 400 }
-    );
+    throw Object.assign(new Error("Email profile is not properly configured"), {
+      statusCode: 400,
+    });
   }
 
   const [profile] = await db
@@ -63,48 +74,175 @@ async function validateCopilotCanActivate(copilotId: number) {
     .where(eq(emailProfiles.id, copilot.emailProfileId));
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw Object.assign(
-      new Error("Email profile is not properly configured"),
-      { statusCode: 400 }
-    );
+    throw Object.assign(new Error("Email profile is not properly configured"), {
+      statusCode: 400,
+    });
   }
 }
 
 export async function listCopilots(userId: number) {
-  return db.select().from(copilots).where(eq(copilots.userId, userId));
+  return db
+    .select({
+      ...getTableColumns(copilots),
+      scrapeProfile: getTableColumns(scrapeProfiles),
+      emailProfile: getTableColumns(emailProfiles),
+    })
+    .from(copilots)
+    .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
+    .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
+    .where(eq(copilots.userId, userId));
 }
 
 export async function getCopilot(id: number, userId: number) {
   const [row] = await db
-    .select()
+    .select({
+      ...getTableColumns(copilots),
+      scrapeProfile: getTableColumns(scrapeProfiles),
+      emailProfile: getTableColumns(emailProfiles),
+    })
     .from(copilots)
+    .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
+    .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
-  if (!row) throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+  if (!row)
+    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
   return row;
 }
 
 export async function createCopilot(userId: number, data: CreateCopilotInput) {
   const sub = await getActiveSubscription(userId);
-  const [created] = await db
-    .insert(copilots)
-    .values({ ...data, userId })
-    .returning();
-  await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
-  return created;
+
+  return await db.transaction(async (tx) => {
+    let scrapeProfileId = data.scrapeProfileId ?? null;
+    const scrapeProfile = data.scrapeProfile ?? null;
+    let scrapeProfileData = null;
+
+    let emailProfileId = data.emailProfileId ?? null;
+    const emailProfile = data.emailProfile ?? null;
+    let emailProfileData = null;
+
+    if (!scrapeProfileId && scrapeProfile) {
+      const [profile] = await tx
+        .insert(scrapeProfiles)
+        .values({ ...scrapeProfile, userId })
+        .returning();
+      scrapeProfileId = profile.id;
+      scrapeProfileData = profile;
+    }
+
+    if (!emailProfileId && emailProfile) {
+      const [profile] = await tx
+        .insert(emailProfiles)
+        .values({ ...emailProfile, userId })
+        .returning();
+      emailProfileId = profile.id;
+      emailProfileData = profile;
+    }
+
+    const [created] = await tx
+      .insert(copilots)
+      .values({ ...data, userId, scrapeProfileId, emailProfileId })
+      .returning();
+
+    await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
+
+    if (scrapeProfileId && !scrapeProfileData) {
+      const [profile] = await tx
+        .select()
+        .from(scrapeProfiles)
+        .where(eq(scrapeProfiles.id, scrapeProfileId));
+
+      scrapeProfileData = profile;
+    }
+
+    if (emailProfileId && !emailProfileData) {
+      const [profile] = await tx
+        .select()
+        .from(emailProfiles)
+        .where(eq(emailProfiles.id, emailProfileId));
+
+      emailProfileData = profile;
+    }
+
+    return {
+      ...created,
+      scrapeProfile: scrapeProfileData,
+      emailProfile: emailProfileData,
+    };
+  });
 }
 
-export async function updateCopilot(id: number, userId: number, data: UpdateCopilotInput) {
-  const [updated] = await db
-    .update(copilots)
-    .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
-    .returning();
-  if (!updated) throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
-  return updated;
+export async function updateCopilot(
+  id: number,
+  userId: number,
+  data: UpdateCopilotInput,
+) {
+  let scrapeProfileId = data.scrapeProfileId ?? null;
+  const scrapeProfile = data.scrapeProfile ?? null;
+
+  let emailProfileId = data.emailProfileId ?? null;
+  const emailProfile = data.emailProfile ?? null;
+
+  return await db.transaction(async (tx) => {
+    let emailProfileData = null;
+    let scrapeProfileData = null;
+    if (!scrapeProfileId && scrapeProfile) {
+      const [profile] = await tx
+        .insert(scrapeProfiles)
+        .values({ ...scrapeProfile, userId })
+        .returning();
+      scrapeProfileId = profile.id;
+      scrapeProfileData = profile;
+    }
+
+    if (!emailProfileId && emailProfile) {
+      const [profile] = await tx
+        .insert(emailProfiles)
+        .values({ ...emailProfile, userId })
+        .returning();
+      emailProfileId = profile.id;
+      emailProfileData = profile;
+    }
+
+    const [updated] = await tx
+      .update(copilots)
+      .set({ ...data, scrapeProfileId, emailProfileId, updatedAt: new Date() })
+      .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
+      .returning();
+
+    if (!updated)
+      throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+
+    if (scrapeProfileId && !scrapeProfileData) {
+      const [profile] = await tx
+        .select()
+        .from(scrapeProfiles)
+        .where(eq(scrapeProfiles.id, scrapeProfileId));
+
+      scrapeProfileData = profile;
+    }
+
+    if (emailProfileId && !emailProfileData) {
+      const [profile] = await tx
+        .select()
+        .from(emailProfiles)
+        .where(eq(emailProfiles.id, emailProfileId));
+
+      emailProfileData = profile;
+    }
+
+    return {
+      ...updated,
+      scrapeProfile: scrapeProfileData,
+      emailProfile: emailProfileData,
+    };
+  });
 }
 
 export async function deleteCopilot(id: number, userId: number) {
-  await db.delete(copilots).where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+  await db
+    .delete(copilots)
+    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
 }
 
 export async function duplicateCopilot(id: number, userId: number) {
@@ -119,9 +257,10 @@ export async function duplicateCopilot(id: number, userId: number) {
 
   const sub = await getActiveSubscription(userId);
 
-  const newName = original.name.length > 140
-    ? "Copy of " + original.name.substring(0, 140)
-    : "Copy of " + original.name;
+  const newName =
+    original.name.length > 140
+      ? "Copy of " + original.name.substring(0, 140)
+      : "Copy of " + original.name;
 
   const [created] = await db
     .insert(copilots)
@@ -148,14 +287,15 @@ export async function duplicateCopilot(id: number, userId: number) {
 export async function updateCopilotStatus(
   id: number,
   userId: number,
-  data: UpdateCopilotStatusInput
+  data: UpdateCopilotStatusInput,
 ) {
   const [updated] = await db
     .update(copilots)
     .set({ status: data.status, updatedAt: new Date() })
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
     .returning();
-  if (!updated) throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+  if (!updated)
+    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
 
   if (data.status === "active") {
     await validateCopilotCanActivate(id);
@@ -174,7 +314,9 @@ export async function runCopilot(id: number, userId: number) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
   }
 
-  console.log(` ${new Date().toLocaleTimeString()} - 🚀 Triggering copilot ${id} for user ${userId}`);
+  console.log(
+    ` ${new Date().toLocaleTimeString()} - 🚀 Triggering copilot ${id} for user ${userId}`,
+  );
 
   await db
     .update(copilots)
@@ -192,44 +334,64 @@ export async function runCopilot(id: number, userId: number) {
       .from(scrapeProfiles)
       .where(eq(scrapeProfiles.id, copilot.scrapeProfileId));
     if (profile) {
-      console.log(` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id} with limit ${copilot.sendLimit}`);
+      console.log(
+        ` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id} with limit ${copilot.sendLimit}`,
+      );
       runScrapeJob(profile, undefined, copilot.sendLimit)
         .then((scrapeJob) => {
-          console.log(` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`);
+          console.log(
+            ` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`,
+          );
           db.update(copilots)
             .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
             .where(eq(copilots.id, id))
             .catch(console.error);
         })
         .catch((err) => {
-          console.error(` ${new Date().toLocaleTimeString()} - ⚠️ Scrape job failed for copilot ${id}:`, err);
+          console.error(
+            ` ${new Date().toLocaleTimeString()} - ⚠️ Scrape job failed for copilot ${id}:`,
+            err,
+          );
           db.update(copilots)
-            .set({ status: "paused", lastError: "Scrape job failed: " + err.message, updatedAt: new Date() })
+            .set({
+              status: "paused",
+              lastError: "Scrape job failed: " + err.message,
+              updatedAt: new Date(),
+            })
             .where(eq(copilots.id, id))
             .catch(console.error);
         })
         .finally(() => {
-          console.log(` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`);
+          console.log(
+            ` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`,
+          );
           sendPendingLeads(id)
             .then(() => {
-              console.log(` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`);
+              console.log(
+                ` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`,
+              );
               db.update(copilots)
                 .set({ status: "completed", updatedAt: new Date() })
                 .where(eq(copilots.id, id))
                 .catch(console.error);
             })
             .catch((err) => {
-              console.error(` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`, err);
+              console.error(
+                ` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`,
+                err,
+              );
               db.update(copilots)
-                .set({ status: "paused", lastError: "Email job failed: " + err.message, updatedAt: new Date() })
+                .set({
+                  status: "paused",
+                  lastError: "Email job failed: " + err.message,
+                  updatedAt: new Date(),
+                })
                 .where(eq(copilots.id, id))
                 .catch(console.error);
             });
         });
     }
   }
-
-
 
   return {
     message: "Copilot triggered successfully",
@@ -269,8 +431,8 @@ export async function getCopilotStatus(id: number, userId: number) {
         and(
           eq(emailLogs.usersId, userId),
           eq(emailLogs.status, "sent"),
-          gte(emailLogs.sentAt, startOfDay)
-        )
+          gte(emailLogs.sentAt, startOfDay),
+        ),
       );
 
     emailStats = {
@@ -295,13 +457,13 @@ export async function getCopilotStatus(id: number, userId: number) {
     newLeadsCount: Number(newLeadsCount[0]?.count ?? 0),
     scrapeJob: scrapeJob
       ? {
-        id: scrapeJob.id,
-        status: scrapeJob.status,
-        leadsFound: scrapeJob.leadsFound,
-        errorMessage: scrapeJob.errorMessage,
-        createdAt: scrapeJob.createdAt,
-        finishedAt: scrapeJob.finishedAt,
-      }
+          id: scrapeJob.id,
+          status: scrapeJob.status,
+          leadsFound: scrapeJob.leadsFound,
+          errorMessage: scrapeJob.errorMessage,
+          createdAt: scrapeJob.createdAt,
+          finishedAt: scrapeJob.finishedAt,
+        }
       : null,
     emailStats,
   };

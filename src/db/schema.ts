@@ -162,8 +162,9 @@ export const scrapeProfiles = pgTable("scrape_profiles", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 100 }).notNull(),
-  // ✅ Widened from 100 → 500: real search queries ("plumbers in Amsterdam near city centre") easily exceed 100 chars
   searchQuery: varchar("search_query", { length: 500 }).notNull(),
+  country: varchar({ length: 100 }),
+  city: varchar({ length: 100 }),
   status: scrapeStatusEnum("status").notNull().default("idle"),
   resultsCount: integer("results_count").notNull().default(0),
   lastRun: timestamp("last_run"),

@@ -3,7 +3,7 @@ import { emailProviderEnum } from "../db/schema";
 
 export const createEmailProfileSchema = z.object({
   profileName: z.string().min(1).max(100),
-  email: z.string().email(),
+  email: z.email(),
   sendName: z.string().min(1).max(100).optional(),
   provider: z.enum(["gmail", "outlook", "smtp"]).default("smtp"),
   smtpHost: z.string().min(1).optional(),

@@ -291,8 +291,8 @@ async function runScrapeJob(
     listings = await listGoogleMapsListings({
       browser,
       keyword: searchQuery,
-      city: "",
-      country: "",
+      city: scrapeProfile.city ?? "",
+      country: scrapeProfile.country ?? "",
       max: maxListings,
       feedsListingFilter: async (card) => {
         if (!card.placeId) {

@@ -293,7 +293,7 @@ export const copilots = pgTable("copilots", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 150 }).notNull(),
   description: text("description"),
-  sendLimit: integer("send_limit").notNull().default(100),
+  sendLimit: integer("send_limit"),
   status: copilotStatusEnum("status").notNull().default("draft"),
   emailProfileId: integer("email_profile_id").references(
     () => emailProfiles.id,

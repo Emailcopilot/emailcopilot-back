@@ -57,6 +57,7 @@ app.use(
 );
 app.use(clerkMiddleware());
 app.use(morgan("combined"));
+app.set("trust proxy", 1);
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 

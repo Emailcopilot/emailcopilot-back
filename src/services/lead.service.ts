@@ -1,7 +1,15 @@
 import { copilotLeadsTable, copilots, leads2Table } from "./../db/schema";
 import { db } from "../db/drizzle";
 import { leads, emailLogs } from "../db/schema";
-import { eq, desc, count, sql, and, getTableColumns } from "drizzle-orm";
+import {
+  eq,
+  desc,
+  count,
+  sql,
+  and,
+  getTableColumns,
+  isNotNull,
+} from "drizzle-orm";
 import type { LeadStatus } from "../db/types";
 import type {
   PatchLeadInput,
@@ -15,14 +23,16 @@ export async function listLeads(
   // console.log("listLeads", status, page, limit, userId);
   const offset = (page - 1) * limit;
   const where = and(
-    // status ? eq(leads2Table.status, status as LeadStatus2) : undefined,
     eq(copilots.userId, userId),
+    isNotNull(copilotLeadsTable.id),
   );
 
   const query = () =>
     db
       .select({
         ...getTableColumns(leads2Table),
+        sentAt: copilotLeadsTable.sentAt,
+        status: copilotLeadsTable.status,
       })
       .from(leads2Table)
       .leftJoin(copilotLeadsTable, eq(leads2Table.id, copilotLeadsTable.leadId))

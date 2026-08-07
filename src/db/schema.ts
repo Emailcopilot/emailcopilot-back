@@ -294,6 +294,7 @@ export const copilots = pgTable("copilots", {
   name: varchar("name", { length: 150 }).notNull(),
   description: text("description"),
   sendLimit: integer("send_limit"),
+  // sendLimitActive: boolean().notNull().default(false),
   status: copilotStatusEnum("status").notNull().default("draft"),
   emailProfileId: integer("email_profile_id").references(
     () => emailProfiles.id,

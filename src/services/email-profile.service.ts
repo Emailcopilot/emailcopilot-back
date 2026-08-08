@@ -1,3 +1,4 @@
+import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { emailProfiles, subscriptions } from "../db/schema";
 import { and, count, desc, eq } from "drizzle-orm";
@@ -9,14 +10,22 @@ import type {
   UpdateEmailProfileInput,
 } from "../validators/email-profile.validator";
 
-export async function listEmailProfiles(userId: number) {
-  return db
+export async function listEmailProfiles(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
+  const rows = await db
     .select()
     .from(emailProfiles)
     .where(eq(emailProfiles.userId, userId));
+  res.json(rows);
 }
 
-export async function getEmailProfile(id: number, userId: number) {
+export async function getEmailProfile(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   const [row] = await db
     .select()
     .from(emailProfiles)
@@ -25,7 +34,7 @@ export async function getEmailProfile(id: number, userId: number) {
     throw Object.assign(new Error("Email profile not found"), {
       statusCode: 404,
     });
-  return row;
+  res.json(row);
 }
 
 async function getUsableSubscription(userId: number) {
@@ -66,10 +75,10 @@ async function assertEmailProfileWithinPlanLimit(
   }
 }
 
-export async function createEmailProfile(
-  userId: number,
-  data: CreateEmailProfileInput,
-) {
+export async function createEmailProfile(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
+  const data = req.body as CreateEmailProfileInput;
+
   const sub = await getUsableSubscription(userId);
   await assertEmailProfileWithinPlanLimit(userId, sub.planId);
 
@@ -78,14 +87,17 @@ export async function createEmailProfile(
     .values({ ...data, userId })
     .returning();
   await incrementUsage(userId, sub.id, { emailProfilesCreated: 1 });
-  return created;
+  res.status(201).json(created);
 }
 
 export async function updateEmailProfile(
-  id: number,
-  userId: number,
-  data: UpdateEmailProfileInput,
+  req: Request<{ id: string }>,
+  res: Response,
 ) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+  const data = req.body as UpdateEmailProfileInput;
+
   const [updated] = await db
     .update(emailProfiles)
     .set({ ...data, updatedAt: new Date() })
@@ -95,20 +107,24 @@ export async function updateEmailProfile(
     throw Object.assign(new Error("Email profile not found"), {
       statusCode: 404,
     });
-  return updated;
+  res.json(updated);
 }
 
-export async function deleteEmailProfile(id: number, userId: number) {
+export async function deleteEmailProfile(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   await db
     .delete(emailProfiles)
     .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+  res.status(204).send();
 }
 
-/**
- * Verifies the SMTP config stored in the given profile (not global settings).
- * Updates the profile status based on the result.
- */
-export async function verifyEmailProfile(
+/** Verifies the SMTP config stored in the given profile (not global settings). */
+async function verifyEmailProfileForUser(
   id: number,
   userId: number,
 ): Promise<SendResult> {
@@ -156,3 +172,17 @@ export async function verifyEmailProfile(
 
   return result;
 }
+
+export async function verifyEmailProfile(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const result = await verifyEmailProfileForUser(
+    Number(req.params.id),
+    req.dbUser!.id,
+  );
+  res.json(result);
+}
+
+/** @internal Used by scripts/tests — not an HTTP handler. */
+export { verifyEmailProfileForUser };

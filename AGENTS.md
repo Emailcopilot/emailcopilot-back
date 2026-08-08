@@ -13,12 +13,35 @@
 
 ## Stack
 
-- **Runtime**: Node.js (Express)
+- **Runtime**: Node.js (Express 5)
 - **Auth**: Clerk (`@clerk/express`)
 - **ORM**: Drizzle + PostgreSQL (Neon)
 - **Payments**: Mollie
 - **Scraping**: Playwright + puppeteer-extra-plugin-stealth (`src/scraping/`)
 - **Validation**: Zod
+
+## Route / Service Pattern (Express 5)
+
+Routers only wire middleware + service handlers. Services own `req`/`res` (parse input, call DB, `res.json` / status). Do **not** wrap handlers in `try/catch` + `next(err)` — Express 5 forwards rejected promises to `errorHandler`.
+
+```ts
+// routes/leads.ts
+leadsRouter.get("/", validate(listLeadsSchema, "query"), leadService.listLeads);
+leadsRouter.get("/:id", leadService.getLead);
+
+// services/lead.service.ts
+export async function listLeads(req: Request, res: Response) {
+  const { page, limit } = req.query as unknown as ListLeadsInput;
+  const userId = req.dbUser!.id;
+  // ... db work ...
+  res.json({ data, meta });
+}
+```
+
+Notes:
+- Throw `Object.assign(new Error("..."), { statusCode: 404 })` for HTTP errors.
+- `validate()` replaces `req.body` / `req.params`; for `query` it redefines the property (Express 5 `req.query` is read-only).
+- Special cases (e.g. Mollie webhook plain-text 500 for retries) may catch locally inside the service handler.
 
 ## Required Env Variables
 
@@ -36,8 +59,8 @@ PORT=3001
 src/
 ├── index.ts         # Entry point, Express app setup
 ├── scraping/        # Continuous scrape loop (Maps + website email crawl)
-├── routes/          # API endpoints (leads, emails, billing, copilot, scrape-*)
-├── services/        # Business logic (mailer, copilot, lifecycle, profiles)
+├── routes/          # Thin routers: middleware + service handlers only
+├── services/        # Route handlers (req/res) + domain logic (mailer, lifecycle)
 ├── db/              # Drizzle schema + drizzle.ts connection
 ├── middleware/      # Auth (Clerk), error handler
 ├── validators/      # Zod schemas

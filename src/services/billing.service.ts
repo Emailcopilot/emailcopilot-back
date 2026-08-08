@@ -1,3 +1,4 @@
+import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import {
   subscriptions,
@@ -39,11 +40,12 @@ function mapMollieStatus(
   return map[mollieStatus] ?? "pending";
 }
 
-export function listPlans() {
-  return PLANS;
+export function listPlans(_req: Request, res: Response) {
+  res.json(PLANS);
 }
 
-export async function getSubscription(userId: number) {
+export async function getSubscription(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
   const [sub] = await db
     .select()
     .from(subscriptions)
@@ -54,18 +56,22 @@ export async function getSubscription(userId: number) {
   if (!sub) {
     throw Object.assign(new Error("No subscription found"), { statusCode: 404 });
   }
-  return sub;
+  res.json(sub);
 }
 
-export async function listInvoices(userId: number) {
-  return db
+export async function listInvoices(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
+  const rows = await db
     .select()
     .from(invoices)
     .where(eq(invoices.userId, userId))
     .orderBy(desc(invoices.createdAt));
+  res.json(rows);
 }
 
-export async function subscribe(user: DbUser, { planId }: SubscribeInput) {
+export async function subscribe(req: Request, res: Response) {
+  const user = req.dbUser! as DbUser;
+  const { planId } = req.body as SubscribeInput;
   const plan = getPlan(planId)!;
 
   console.log(`User ${user.email} subscribing to ${planId}`);
@@ -162,10 +168,19 @@ export async function subscribe(user: DbUser, { planId }: SubscribeInput) {
     });
   });
 
-  return { checkoutUrl: payment.getCheckoutUrl() };
+  res.json({ checkoutUrl: payment.getCheckoutUrl() });
 }
 
-export async function cancelSubscription(userId: number) {
+export function subscribeReturn(req: Request, res: Response) {
+  const { planId } = req.query as { planId?: string };
+  const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
+  res.redirect(
+    `${frontendUrl}/dashboard/billing?plan=${planId ?? ""}&status=pending`,
+  );
+}
+
+export async function cancelSubscription(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
   const [sub] = await db
     .select()
     .from(subscriptions)
@@ -200,13 +215,14 @@ export async function cancelSubscription(userId: number) {
     })
     .where(eq(subscriptions.userId, userId));
 
-  return {
+  res.json({
     message: "Subscription canceled successfully",
     accessUntil: sub.currentPeriodEnd,
-  };
+  });
 }
 
-export async function getLimits(userId: number) {
+export async function getLimits(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
   const [sub] = await db
     .select()
     .from(subscriptions)
@@ -215,12 +231,13 @@ export async function getLimits(userId: number) {
     .limit(1);
 
   if (!sub || !isSubscriptionUsable(sub)) {
-    return {
+    res.json({
       hasActivePlan: false,
       planId: null,
       limits: null,
       usage: null,
-    };
+    });
+    return;
   }
 
   const planLimits = getPlanLimits(sub.planId);
@@ -254,7 +271,7 @@ export async function getLimits(userId: number) {
 
   const emailsSent = currentUsage?.emailsSent ?? 0;
 
-  return {
+  res.json({
     hasActivePlan: true,
     planId: sub.planId,
     cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
@@ -285,11 +302,11 @@ export async function getLimits(userId: number) {
           ? null
           : Math.max(0, planLimits.emailProfiles - emailProfilesCount),
     },
-  };
+  });
 }
 
 /** Process a Mollie webhook payload id (`tr_…` payment or `sub_…` subscription). */
-export async function processWebhook(id: string) {
+async function processWebhookPayment(id: string) {
   console.log(`📬 Webhook received: ${id}`);
 
   if (id.startsWith("tr_")) {
@@ -336,6 +353,22 @@ export async function processWebhook(id: string) {
     }
   } else if (id.startsWith("sub_")) {
     await handleSubscriptionWebhook(id);
+  }
+}
+
+export async function processWebhook(req: Request, res: Response) {
+  const { id } = req.body as { id?: string };
+  if (!id) {
+    res.status(400).send("Missing id");
+    return;
+  }
+
+  try {
+    await processWebhookPayment(id);
+    res.status(200).send("ok");
+  } catch (err) {
+    console.error("❌ Webhook processing error:", err);
+    res.status(500).send("error");
   }
 }
 

@@ -1,102 +1,32 @@
-import { Router, Request, Response, NextFunction } from "express";
+import { Router } from "express";
 import { validate } from "../middleware/validate.middleware";
 import {
-    createCopilotSchema,
-    updateCopilotSchema,
-    updateCopilotStatusSchema,
+  createCopilotSchema,
+  updateCopilotSchema,
+  updateCopilotStatusSchema,
 } from "../validators/copilot.validator";
 import * as copilotService from "../services/copilot.service";
 
 export const copilotsRouter: Router = Router();
 
-// GET /api/copilots
-copilotsRouter.get("/", async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const rows = await copilotService.listCopilots(req.dbUser.id);
-        res.json(rows);
-    } catch (err) { next(err); }
-});
-
-// GET /api/copilots/:id
-copilotsRouter.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const row = await copilotService.getCopilot(Number(req.params.id), req.dbUser.id);
-        res.json(row);
-    } catch (err) { next(err); }
-});
-
-// POST /api/copilots
+copilotsRouter.get("/", copilotService.listCopilots);
+copilotsRouter.get("/:id", copilotService.getCopilot);
 copilotsRouter.post(
-    "/",
-    validate(createCopilotSchema),
-    async (req: Request, res: Response, next: NextFunction) => {
-        try {
-            const created = await copilotService.createCopilot(req.dbUser.id, req.body);
-            res.status(201).json(created);
-        } catch (err) { next(err); }
-    }
+  "/",
+  validate(createCopilotSchema),
+  copilotService.createCopilot,
 );
-
-// PUT /api/copilots/:id
 copilotsRouter.put(
-    "/:id",
-    validate(updateCopilotSchema),
-    async (req: Request, res: Response, next: NextFunction) => {
-        try {
-            const updated = await copilotService.updateCopilot(
-                Number(req.params.id),
-                req.dbUser.id,
-                req.body
-            );
-            res.json(updated);
-        } catch (err) { next(err); }
-    }
+  "/:id",
+  validate(updateCopilotSchema),
+  copilotService.updateCopilot,
 );
-
-// DELETE /api/copilots/:id
-copilotsRouter.delete("/:id", async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        await copilotService.deleteCopilot(Number(req.params.id), req.dbUser.id);
-        res.status(204).send();
-    } catch (err) { next(err); }
-});
-
-// PATCH /api/copilots/:id/status
+copilotsRouter.delete("/:id", copilotService.deleteCopilot);
 copilotsRouter.patch(
-    "/:id/status",
-    validate(updateCopilotStatusSchema),
-    async (req: Request, res: Response, next: NextFunction) => {
-        try {
-            const updated = await copilotService.updateCopilotStatus(
-                Number(req.params.id),
-                req.dbUser.id,
-                req.body
-            );
-            res.json(updated);
-        } catch (err) { next(err); }
-    }
+  "/:id/status",
+  validate(updateCopilotStatusSchema),
+  copilotService.updateCopilotStatus,
 );
-
-// POST /api/copilots/:id/run
-copilotsRouter.post("/:id/run", async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const result = await copilotService.runCopilot(Number(req.params.id), req.dbUser.id);
-        res.json(result);
-    } catch (err) { next(err); }
-});
-
-// GET /api/copilots/:id/status
-copilotsRouter.get("/:id/status", async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const status = await copilotService.getCopilotStatus(Number(req.params.id), req.dbUser.id);
-        res.json(status);
-    } catch (err) { next(err); }
-});
-
-// POST /api/copilots/:id/duplicate
-copilotsRouter.post("/:id/duplicate", async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const created = await copilotService.duplicateCopilot(Number(req.params.id), req.dbUser.id);
-        res.status(201).json(created);
-    } catch (err) { next(err); }
-});
+copilotsRouter.post("/:id/run", copilotService.runCopilot);
+copilotsRouter.get("/:id/status", copilotService.getCopilotStatus);
+copilotsRouter.post("/:id/duplicate", copilotService.duplicateCopilot);

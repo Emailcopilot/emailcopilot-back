@@ -1,3 +1,4 @@
+import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import {
   copilots,
@@ -97,8 +98,10 @@ async function validateCopilotCanActivate(copilotId: number) {
   }
 }
 
-export async function listCopilots(userId: number) {
-  return db
+export async function listCopilots(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
+
+  const rows = await db
     .select({
       ...getTableColumns(copilots),
       scrapeProfile: getTableColumns(scrapeProfiles),
@@ -108,9 +111,14 @@ export async function listCopilots(userId: number) {
     .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
     .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
     .where(eq(copilots.userId, userId));
+
+  res.json(rows);
 }
 
-export async function getCopilot(id: number, userId: number) {
+export async function getCopilot(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   const [row] = await db
     .select({
       ...getTableColumns(copilots),
@@ -121,16 +129,21 @@ export async function getCopilot(id: number, userId: number) {
     .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
     .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+
   if (!row)
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
-  return row;
+
+  res.json(row);
 }
 
-export async function createCopilot(userId: number, data: CreateCopilotInput) {
+export async function createCopilot(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
+  const data = req.body as CreateCopilotInput;
+
   const sub = await getActiveSubscription(userId);
   await assertCopilotWithinPlanLimit(userId, sub.planId);
 
-  return await db.transaction(async (tx) => {
+  const created = await db.transaction(async (tx) => {
     let scrapeProfileId = data.scrapeProfileId ?? null;
     const scrapeProfile = data.scrapeProfile ?? null;
     let scrapeProfileData = null;
@@ -157,7 +170,7 @@ export async function createCopilot(userId: number, data: CreateCopilotInput) {
       emailProfileData = profile;
     }
 
-    const [created] = await tx
+    const [row] = await tx
       .insert(copilots)
       .values({ ...data, userId, scrapeProfileId, emailProfileId })
       .returning();
@@ -183,25 +196,27 @@ export async function createCopilot(userId: number, data: CreateCopilotInput) {
     }
 
     return {
-      ...created,
+      ...row,
       scrapeProfile: scrapeProfileData,
       emailProfile: emailProfileData,
     };
   });
+
+  res.status(201).json(created);
 }
 
-export async function updateCopilot(
-  id: number,
-  userId: number,
-  data: UpdateCopilotInput,
-) {
+export async function updateCopilot(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+  const data = req.body as UpdateCopilotInput;
+
   let scrapeProfileId = data.scrapeProfileId ?? null;
   const scrapeProfile = data.scrapeProfile ?? null;
 
   let emailProfileId = data.emailProfileId ?? null;
   const emailProfile = data.emailProfile ?? null;
 
-  return await db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     let emailProfileData = null;
     let scrapeProfileData = null;
     if (!scrapeProfileId && scrapeProfile) {
@@ -222,13 +237,13 @@ export async function updateCopilot(
       emailProfileData = profile;
     }
 
-    const [updated] = await tx
+    const [row] = await tx
       .update(copilots)
       .set({ ...data, scrapeProfileId, emailProfileId, updatedAt: new Date() })
       .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
       .returning();
 
-    if (!updated)
+    if (!row)
       throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
 
     if (scrapeProfileId && !scrapeProfileData) {
@@ -250,20 +265,33 @@ export async function updateCopilot(
     }
 
     return {
-      ...updated,
+      ...row,
       scrapeProfile: scrapeProfileData,
       emailProfile: emailProfileData,
     };
   });
+
+  res.json(updated);
 }
 
-export async function deleteCopilot(id: number, userId: number) {
+export async function deleteCopilot(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   await db
     .delete(copilots)
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+
+  res.status(204).send();
 }
 
-export async function duplicateCopilot(id: number, userId: number) {
+export async function duplicateCopilot(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   const [original] = await db
     .select()
     .from(copilots)
@@ -300,19 +328,23 @@ export async function duplicateCopilot(id: number, userId: number) {
 
   await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
 
-  return created;
+  res.status(201).json(created);
 }
 
 export async function updateCopilotStatus(
-  id: number,
-  userId: number,
-  data: UpdateCopilotStatusInput,
+  req: Request<{ id: string }>,
+  res: Response,
 ) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+  const data = req.body as UpdateCopilotStatusInput;
+
   const [updated] = await db
     .update(copilots)
     .set({ status: data.status, updatedAt: new Date() })
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
     .returning();
+
   if (!updated)
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
 
@@ -320,10 +352,13 @@ export async function updateCopilotStatus(
     await validateCopilotCanActivate(id);
   }
 
-  return updated;
+  res.json(updated);
 }
 
-export async function runCopilot(id: number, userId: number) {
+export async function runCopilot(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   const [copilot] = await db
     .select()
     .from(copilots)
@@ -350,14 +385,20 @@ export async function runCopilot(id: number, userId: number) {
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
     .returning();
 
-  return {
+  res.json({
     message: "Copilot activated; scraping loop will pick it up",
     copilotId: id,
     status: updated.status,
-  };
+  });
 }
 
-export async function getCopilotStatus(id: number, userId: number) {
+export async function getCopilotStatus(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   const [copilot] = await db
     .select()
     .from(copilots)
@@ -399,7 +440,7 @@ export async function getCopilotStatus(id: number, userId: number) {
 
   const newLeadsCount = await getCopilotNewLeadCount(id);
 
-  return {
+  res.json({
     id: copilot.id,
     name: copilot.name,
     status: copilot.status,
@@ -420,5 +461,5 @@ export async function getCopilotStatus(id: number, userId: number) {
         }
       : null,
     emailStats,
-  };
+  });
 }

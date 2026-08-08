@@ -1,9 +1,7 @@
-import { Router, Request, Response, NextFunction } from "express";
+import { Router } from "express";
 import { validate } from "../middleware/validate.middleware";
-import { db } from "../db/drizzle";
-import { emailLogs } from "../db/schema";
-import { desc } from "drizzle-orm";
 import { z } from "zod";
+import * as emailService from "../services/email.service";
 
 export const emailsRouter: Router = Router();
 
@@ -16,28 +14,5 @@ const paginationSchema = z.object({
 emailsRouter.get(
   "/logs",
   validate(paginationSchema, "query"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { page, limit } = req.query as any;
-      const offset = (page - 1) * limit;
-
-      const [rows, total] = await Promise.all([
-        db.query.emailLogs.findMany({
-          orderBy: desc(emailLogs.sentAt),
-          limit,
-          offset,
-          with: {
-            lead: { columns: { id: true, companyName: true, email: true } },
-            template: { columns: { id: true, name: true } },
-          },
-        }),
-        db.$count(emailLogs),
-      ]);
-
-      res.json({
-        data: rows,
-        meta: { total: Number(total), page, limit, totalPages: Math.ceil(Number(total) / limit) },
-      });
-    } catch (err) { next(err); }
-  }
+  emailService.listEmailLogs,
 );

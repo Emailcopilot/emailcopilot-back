@@ -27,6 +27,7 @@ import { db } from "./db/drizzle";
 import BrowserManager from "./scraping/browserManager";
 import morgan from "morgan";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { NODE_ENV } from "./lib/env";
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const app: express.Application = express();
@@ -46,7 +47,7 @@ app.use(
   }),
 );
 app.use(clerkMiddleware());
-app.use(morgan("combined"));
+app.use(morgan(NODE_ENV === "development" ? "dev" : "combined"));
 app.set("trust proxy", 1);
 
 // ─── Public routes ────────────────────────────────────────────────────────────

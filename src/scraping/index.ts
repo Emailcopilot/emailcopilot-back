@@ -21,6 +21,9 @@ import {
 } from "../services/copilot-lifecycle.service";
 import type { CopilotProgress } from "../services/copilot-lifecycle.service";
 
+const MAX_SCRAPE_FAILURES = 3;
+const scrapeFailureCounts = new Map<number, number>();
+
 const stopScrapeJob = async ({
   scrapeJobId,
   status,
@@ -420,6 +423,7 @@ async function runScrapeJob(
       console.log(
         `⚠️ Scrape job ${runningJob.id} ended with error after finding ${jobState.leadsFound} lead(s)`,
       );
+      scrapeFailureCounts.delete(runningJob.id);
       await stopScrapeJob({
         scrapeJobId: runningJob.id,
         status: "done",
@@ -428,8 +432,29 @@ async function runScrapeJob(
       return;
     }
 
-    throw error;
+    const failures = (scrapeFailureCounts.get(runningJob.id) ?? 0) + 1;
+    scrapeFailureCounts.set(runningJob.id, failures);
+
+    if (failures < MAX_SCRAPE_FAILURES) {
+      console.warn(
+        `⚠️ Scrape job ${runningJob.id} failed (${failures}/${MAX_SCRAPE_FAILURES}): ${message}`,
+      );
+      throw error;
+    }
+
+    scrapeFailureCounts.delete(runningJob.id);
+    const reason = `Maps scrape failed after ${failures} attempts: ${message}`;
+    console.error(`❌ ${reason}`);
+    await stopScrapeJob({
+      scrapeJobId: runningJob.id,
+      status: "failed",
+      errorMessage: reason,
+    });
+    await pauseCopilot(copilotId, reason);
+    return;
   }
+
+  scrapeFailureCounts.delete(runningJob.id);
 
   if (listings.length === 0) {
     console.log(`❌ No listings found for ${searchQuery}`);

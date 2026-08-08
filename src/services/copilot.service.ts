@@ -110,6 +110,7 @@ export async function listCopilots(req: Request, res: Response) {
     .from(copilots)
     .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
     .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
+    .orderBy(desc(copilots.createdAt))
     .where(eq(copilots.userId, userId));
 
   res.json(rows);
@@ -205,7 +206,10 @@ export async function createCopilot(req: Request, res: Response) {
   res.status(201).json(created);
 }
 
-export async function updateCopilot(req: Request<{ id: string }>, res: Response) {
+export async function updateCopilot(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
   const id = Number(req.params.id);
   const userId = req.dbUser!.id;
   const data = req.body as UpdateCopilotInput;
@@ -274,7 +278,10 @@ export async function updateCopilot(req: Request<{ id: string }>, res: Response)
   res.json(updated);
 }
 
-export async function deleteCopilot(req: Request<{ id: string }>, res: Response) {
+export async function deleteCopilot(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
   const id = Number(req.params.id);
   const userId = req.dbUser!.id;
 

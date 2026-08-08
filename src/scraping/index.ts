@@ -15,7 +15,6 @@ import {
   getActiveSubscription,
   getCopilotProgress,
   pauseCopilot,
-  periodicCopilotNeedCheck,
   setCopilotActive,
   resolveNextCopilot,
   completeCopilot,
@@ -416,26 +415,13 @@ async function runScrapeJob(
 async function runScraping(browserManager: BrowserManager) {
   console.log(`🔍 Running scraping loop ${new Date().toISOString()}`);
 
-  const COPILOT_NEED_CHECK_MS = 30_000;
-  let lastCopilotNeedCheck = 0;
-
   while (true) {
     try {
       const browser = await browserManager.getBrowser();
-      let copilot = await resolveNextCopilot();
+      const copilot = await resolveNextCopilot();
 
       if (copilot) {
         await processCopilot(browser, copilot);
-      }
-
-      if (Date.now() - lastCopilotNeedCheck >= COPILOT_NEED_CHECK_MS) {
-        if (!copilot) {
-          copilot = await periodicCopilotNeedCheck();
-          if (copilot) {
-            await processCopilot(browser, copilot);
-          }
-        }
-        lastCopilotNeedCheck = Date.now();
       }
 
       await new Promise((resolve) => setTimeout(resolve, 1000));

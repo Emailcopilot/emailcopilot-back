@@ -10,10 +10,7 @@ import type { Copilot } from "../db/schema";
 import { and, asc, count, desc, eq, gte, lte } from "drizzle-orm";
 import { getPlan, isSubscriptionUsable } from "../lib/billing";
 
-export const monthStart = () =>
-  new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-
-export const dayStart = () => {
+const dayStart = () => {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   return start;
@@ -36,9 +33,7 @@ export type CopilotProgress = {
   scrapeNeeded: number;
 };
 
-export async function getCopilotSentTodayCount(
-  copilotId: number,
-): Promise<number> {
+async function getCopilotSentTodayCount(copilotId: number): Promise<number> {
   const [{ count: sentToday }] = await db
     .select({ count: count() })
     .from(copilotLeadsTable)
@@ -116,7 +111,7 @@ export async function getCopilotProgress(
 ): Promise<CopilotProgress> {
   const sentTodayCount = await getCopilotSentTodayCount(copilot.id);
   const newLeadCount = await getCopilotNewLeadCount(copilot.id);
-  const dailySendLimit = copilot.sendLimit;
+  const dailySendLimit = copilot.sendLimit ?? 0;
   const remainingToday = Math.max(0, dailySendLimit - sentTodayCount);
   const dailyLimitReached = remainingToday <= 0;
   const scrapeBudget = Math.min(subscription.remainingEmails, remainingToday);
@@ -130,10 +125,6 @@ export async function getCopilotProgress(
     dailyLimitReached,
     scrapeNeeded,
   };
-}
-
-export function copilotNeedsMoreWork(progress: CopilotProgress): boolean {
-  return !progress.dailyLimitReached && progress.remainingToday > 0;
 }
 
 const DAILY_LIMIT_MSG =
@@ -153,7 +144,7 @@ export async function setCopilotActive(copilotId: number, reason?: string) {
   );
 }
 
-export async function setCopilotRunning(copilotId: number): Promise<Copilot> {
+async function setCopilotRunning(copilotId: number): Promise<Copilot> {
   const [running] = await db
     .update(copilots)
     .set({ status: "running", lastError: null, updatedAt: new Date() })
@@ -242,15 +233,7 @@ export async function completeCopilot(copilotId: number) {
   console.log(`✅ Copilot ${copilotId} completed`);
 }
 
-export async function reactivateCopilot(copilotId: number, reason?: string) {
-  await setCopilotActive(copilotId, reason);
-}
-
-export async function promoteActiveCopilot(): Promise<Copilot | null> {
-  return syncCopilotsDailyStatus();
-}
-
-export async function resolveCopilotWithPendingScrapeJob(): Promise<Copilot | null> {
+async function resolveCopilotWithPendingScrapeJob(): Promise<Copilot | null> {
   const [row] = await db
     .select({ copilot: copilots })
     .from(scrapeJobs)
@@ -294,16 +277,7 @@ export async function resolveNextCopilot(): Promise<Copilot | null> {
     return synced;
   }
 
-  const pendingScrape = await resolveCopilotWithPendingScrapeJob();
-  if (pendingScrape) {
-    return pendingScrape;
-  }
-
-  return null;
-}
-
-export async function periodicCopilotNeedCheck(): Promise<Copilot | null> {
-  return syncCopilotsDailyStatus();
+  return resolveCopilotWithPendingScrapeJob();
 }
 
 export async function getRunningCopilots(): Promise<Copilot[]> {

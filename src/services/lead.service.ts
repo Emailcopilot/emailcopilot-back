@@ -15,7 +15,7 @@ export async function listLeads(req: Request, res: Response) {
 
   const where = and(
     eq(copilots.userId, userId),
-    isNotNull(copilotLeadsTable.id),
+    isNotNull(leads2Table.id),
     copilotId ? eq(copilotLeadsTable.copilotId, copilotId) : undefined,
   );
 
@@ -26,9 +26,9 @@ export async function listLeads(req: Request, res: Response) {
         sentAt: copilotLeadsTable.sentAt,
         status: copilotLeadsTable.status,
       })
-      .from(leads2Table)
-      .leftJoin(copilotLeadsTable, eq(leads2Table.id, copilotLeadsTable.leadId))
+      .from(copilotLeadsTable)
       .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id))
+      .leftJoin(leads2Table, eq(copilotLeadsTable.leadId, leads2Table.id))
       .where(where);
 
   const [rows, total] = await Promise.all([

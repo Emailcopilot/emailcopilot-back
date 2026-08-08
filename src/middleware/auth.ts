@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { users } from "../db/schema";
+import { usersTable } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { db } from "../db/drizzle";
 import { getAuth } from "@clerk/express";
@@ -22,7 +22,7 @@ export async function requireApiKey(
       return;
     }
 
-    const user = await db.select().from(users).where(eq(users.clerkId, userId)).then(rows => rows[0]);
+    const user = await db.select().from(usersTable).where(eq(usersTable.clerkId, userId)).then(rows => rows[0]);
 
     if (!user) return res.status(401).json({ error: "User not found" });
 

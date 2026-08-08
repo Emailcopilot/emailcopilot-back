@@ -9,7 +9,6 @@ import { errorHandler } from "./middleware/error.middleware";
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 import { leadsRouter } from "./routes/leads";
-import { emailsRouter } from "./routes/emails";
 import { scrapeJobsRouter } from "./routes/scrape-jobs";
 import { templatesRouter } from "./routes/templates";
 import { billingRouter } from "./routes/billing";
@@ -68,7 +67,6 @@ app.use("/users", usersRouter);
 app.use(requireAuth);
 
 app.use("/leads", leadsRouter);
-app.use("/emails", emailsRouter);
 app.use("/templates", templatesRouter);
 app.use("/copilots", copilotsRouter);
 app.use("/scrape-jobs", scrapeJobsRouter);

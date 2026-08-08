@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "../db/drizzle";
-import { users } from "../db/schema";
+import { usersTable } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 /**
@@ -20,7 +20,7 @@ export async function requireAuth(
       return;
     }
 
-    const [user] = await db.select().from(users).where(eq(users.clerkId, clerkId));
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.clerkId, clerkId));
     if (!user) {
       res.status(404).json({ error: "User not found" });
       return;

@@ -78,28 +78,9 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
 
 export const themeEnum = pgEnum("theme", ["light", "dark", "system"]);
 
-// ✅ Added "replied" and "disqualified" — were used in lead.service but missing from the enum
-export const leadStatusEnum = pgEnum("lead_status", [
-  "new",
-  "queued",
-  "sent",
-  "failed",
-  "replied",
-  "disqualified",
-  "unsubscribed",
-  "pending_email",
-]);
-
-export const emailLogStatusEnum = pgEnum("email_log_status", [
-  "sent",
-  "failed",
-  "opened",
-  "replied",
-]);
-
 // ─── Users ────────────────────────────────────────────────────────────────────
 
-export const users = pgTable("users", {
+export const usersTable = pgTable("users", {
   id: serial("id").primaryKey(),
   clerkId: varchar("clerk_id", { length: 255 }).notNull().unique(),
   firstName: varchar("first_name", { length: 100 }).default(""),
@@ -116,11 +97,11 @@ export const users = pgTable("users", {
 
 // ─── Email Profiles ───────────────────────────────────────────────────────────
 
-export const emailProfiles = pgTable("email_profiles", {
+export const emailProfilesTable = pgTable("email_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   profileName: varchar("profile_name", { length: 100 }).notNull(),
   email: varchar("email", { length: 255 }).notNull(),
   sendName: varchar("send_name", { length: 100 }),
@@ -137,11 +118,11 @@ export const emailProfiles = pgTable("email_profiles", {
 
 // ─── Email Templates ──────────────────────────────────────────────────────────
 
-export const emailTemplates = pgTable("email_templates", {
+export const emailTemplatesTable = pgTable("email_templates", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 150 }).notNull(),
   subject: text("subject").notNull(),
   body: text("body").notNull(),
@@ -156,11 +137,11 @@ export const emailTemplates = pgTable("email_templates", {
 // User-facing config: what to search, how many results, on what schedule.
 // Each execution creates one scrapeJob row.
 
-export const scrapeProfiles = pgTable("scrape_profiles", {
+export const scrapeProfilesTable = pgTable("scrape_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 100 }).notNull(),
   searchQuery: varchar("search_query", { length: 500 }).notNull(),
   country: varchar({ length: 100 }),
@@ -175,14 +156,14 @@ export const scrapeProfiles = pgTable("scrape_profiles", {
 // ─── Scrape Jobs ──────────────────────────────────────────────────────────────
 // One row per execution. Links back to the profile that triggered it.
 
-export const scrapeJobs = pgTable("scrape_jobs", {
+export const scrapeJobsTable = pgTable("scrape_jobs", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id, {
+  userId: integer("user_id").references(() => usersTable.id, {
     onDelete: "set null",
   }),
   // ✅ Added: which profile triggered this job (null for ad-hoc calls)
   scrapeProfileId: integer("scrape_profile_id").references(
-    () => scrapeProfiles.id,
+    () => scrapeProfilesTable.id,
     { onDelete: "set null" },
   ),
   query: text("query").notNull(),
@@ -195,40 +176,11 @@ export const scrapeJobs = pgTable("scrape_jobs", {
 
 // ─── Leads ────────────────────────────────────────────────────────────────────
 
-export const leads = pgTable("leads", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id, {
-    onDelete: "set null",
-  }),
-  companyName: varchar("company_name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 255 }).unique(),
-  website: text("website"),
-  phone: varchar("phone", { length: 50 }),
-  address: text("address"),
-  sourceQuery: text("source_query"),
-  // ✅ Added: direct link to the profile that found this lead (scrapeJobId alone wasn't enough
-  //    because you'd need a join to go lead → job → profile)
-  scrapeProfileId: integer("scrape_profile_id").references(
-    () => scrapeProfiles.id,
-    { onDelete: "set null" },
-  ),
-  scrapeJobId: integer("scrape_job_id").references(() => scrapeJobs.id, {
-    onDelete: "set null",
-  }),
-  scrapedAt: timestamp("scraped_at").notNull().defaultNow(),
-  status: leadStatusEnum("status").notNull().default("new"),
-  notes: text("notes"), // ✅ Added: used by patchLead
-  emailedAt: timestamp("emailed_at"),
-  repliedAt: timestamp("replied_at"), // ✅ Added: used by patchLead
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const leadStatusEnum = pgEnum("lead_status_enum", ["success", "fail"]);
 
-export const leadStatusEnum2 = pgEnum("lead_status_enum", ["success", "fail"]);
-
-export const leads2Table = pgTable("leads2", {
+export const leadsTable = pgTable("leads", {
   ...defaultColumns(),
-  status: leadStatusEnum2().notNull(),
+  status: leadStatusEnum().notNull(),
   companyName: varchar().notNull(),
   email: varchar(),
   website: varchar(),
@@ -246,69 +198,39 @@ export const copilotLeadStatusEnum = pgEnum("copilot_lead_status_enum", [
 
 export const copilotLeadsTable = pgTable("copilot_leads", {
   ...defaultColumns(),
-  copilotId: integer().references(() => copilots.id),
-  leadId: integer().references(() => leads2Table.id),
+  copilotId: integer().references(() => copilotsTable.id),
+  leadId: integer().references(() => leadsTable.id),
   status: copilotLeadStatusEnum().notNull().default("new"),
   sentAt: timestamp(),
   failedAt: timestamp(),
   errorMessage: text(),
 });
 
-// ─── Email Logs ───────────────────────────────────────────────────────────────
-
-export const emailLogs = pgTable("email_logs", {
-  id: serial("id").primaryKey(),
-  usersId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  leadId: integer("lead_id")
-    .notNull()
-    .references(() => leads.id, { onDelete: "cascade" }),
-  templateId: integer("template_id").references(() => emailTemplates.id, {
-    onDelete: "set null",
-  }),
-  subject: text("subject").notNull(),
-  status: emailLogStatusEnum("status").notNull(),
-  errorMessage: text("error_message"),
-  sentAt: timestamp("sent_at").notNull().defaultNow(),
-});
-
-// ─── Scrape Results ───────────────────────────────────────────────────────────
-
-export const scrapeResults = pgTable("scrape_results", {
-  id: serial("id").primaryKey(),
-  scrapeProfileId: integer("scrape_profile_id")
-    .notNull()
-    .references(() => scrapeProfiles.id, { onDelete: "cascade" }),
-  data: jsonb("data").$type<Record<string, string>>().notNull(),
-  scrapedAt: timestamp("scraped_at").notNull().defaultNow(),
-});
-
 // ─── Copilots ─────────────────────────────────────────────────────────────────
 
-export const copilots = pgTable("copilots", {
+export const copilotsTable = pgTable("copilots", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 150 }).notNull(),
   description: text("description"),
   sendLimit: integer("send_limit"),
   // sendLimitActive: boolean().notNull().default(false),
   status: copilotStatusEnum("status").notNull().default("draft"),
   emailProfileId: integer("email_profile_id").references(
-    () => emailProfiles.id,
+    () => emailProfilesTable.id,
     {
       onDelete: "set null",
     },
   ),
   scrapeProfileId: integer("scrape_profile_id").references(
-    () => scrapeProfiles.id,
+    () => scrapeProfilesTable.id,
     {
       onDelete: "set null",
     },
   ),
-  templateId: integer("template_id").references(() => emailTemplates.id, {
+  templateId: integer("template_id").references(() => emailTemplatesTable.id, {
     onDelete: "set null",
   }),
   settings: jsonb("settings")
@@ -319,7 +241,7 @@ export const copilots = pgTable("copilots", {
   emailsOpened: integer("emails_opened").notNull().default(0),
   emailsReplied: integer("emails_replied").notNull().default(0),
   lastRunAt: timestamp("last_run_at"),
-  lastJobId: integer("last_job_id").references(() => scrapeJobs.id, {
+  lastJobId: integer("last_job_id").references(() => scrapeJobsTable.id, {
     onDelete: "set null",
   }),
   lastError: text("last_error"),
@@ -329,11 +251,11 @@ export const copilots = pgTable("copilots", {
 
 // ─── Billing / Subscriptions ──────────────────────────────────────────────────
 
-export const subscriptions = pgTable("subscriptions", {
+export const subscriptionsTable = pgTable("subscriptions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   planId: varchar("plan_id", { length: 50 }).notNull(),
   status: subscriptionStatusEnum("status").notNull().default("pending"),
   mollieCustomerId: varchar("mollie_customer_id", { length: 255 }),
@@ -346,13 +268,13 @@ export const subscriptions = pgTable("subscriptions", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const invoices = pgTable("invoices", {
+export const invoicesTable = pgTable("invoices", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   subscriptionId: integer("subscription_id").references(
-    () => subscriptions.id,
+    () => subscriptionsTable.id,
     {
       onDelete: "set null",
     },
@@ -366,13 +288,13 @@ export const invoices = pgTable("invoices", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const usage = pgTable("usage", {
+export const usageTable = pgTable("usage", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => usersTable.id, { onDelete: "cascade" }),
   subscriptionId: integer("subscription_id").references(
-    () => subscriptions.id,
+    () => subscriptionsTable.id,
     { onDelete: "set null" },
   ),
   periodStart: timestamp("period_start").notNull(),
@@ -385,35 +307,32 @@ export const usage = pgTable("usage", {
 
 // ─── Type exports ─────────────────────────────────────────────────────────────
 
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
+export type User = typeof usersTable.$inferSelect;
+export type NewUser = typeof usersTable.$inferInsert;
 
-export type EmailProfile = typeof emailProfiles.$inferSelect;
-export type NewEmailProfile = typeof emailProfiles.$inferInsert;
+export type EmailProfile = typeof emailProfilesTable.$inferSelect;
+export type NewEmailProfile = typeof emailProfilesTable.$inferInsert;
 
-export type EmailTemplate = typeof emailTemplates.$inferSelect;
-export type NewEmailTemplate = typeof emailTemplates.$inferInsert;
+export type EmailTemplate = typeof emailTemplatesTable.$inferSelect;
+export type NewEmailTemplate = typeof emailTemplatesTable.$inferInsert;
 
-export type ScrapeProfile = typeof scrapeProfiles.$inferSelect;
-export type NewScrapeProfile = typeof scrapeProfiles.$inferInsert;
+export type ScrapeProfile = typeof scrapeProfilesTable.$inferSelect;
+export type NewScrapeProfile = typeof scrapeProfilesTable.$inferInsert;
 
-export type ScrapeJob = typeof scrapeJobs.$inferSelect;
-export type NewScrapeJob = typeof scrapeJobs.$inferInsert;
+export type ScrapeJob = typeof scrapeJobsTable.$inferSelect;
+export type NewScrapeJob = typeof scrapeJobsTable.$inferInsert;
 
-export type Lead = typeof leads.$inferSelect;
-export type NewLead = typeof leads.$inferInsert;
+export type Lead = typeof leadsTable.$inferSelect;
+export type NewLead = typeof leadsTable.$inferInsert;
 
-export type EmailLog = typeof emailLogs.$inferSelect;
-export type NewEmailLog = typeof emailLogs.$inferInsert;
+export type CopilotLead = typeof copilotLeadsTable.$inferSelect;
+export type NewCopilotLead = typeof copilotLeadsTable.$inferInsert;
 
-export type ScrapeResult = typeof scrapeResults.$inferSelect;
-export type NewScrapeResult = typeof scrapeResults.$inferInsert;
+export type Copilot = typeof copilotsTable.$inferSelect;
+export type NewCopilot = typeof copilotsTable.$inferInsert;
 
-export type Copilot = typeof copilots.$inferSelect;
-export type NewCopilot = typeof copilots.$inferInsert;
+export type Subscription = typeof subscriptionsTable.$inferSelect;
+export type NewSubscription = typeof subscriptionsTable.$inferInsert;
 
-export type Subscription = typeof subscriptions.$inferSelect;
-export type NewSubscription = typeof subscriptions.$inferInsert;
-
-export type Invoice = typeof invoices.$inferSelect;
-export type NewInvoice = typeof invoices.$inferInsert;
+export type Invoice = typeof invoicesTable.$inferSelect;
+export type NewInvoice = typeof invoicesTable.$inferInsert;

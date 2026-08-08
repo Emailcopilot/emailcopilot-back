@@ -1,8 +1,8 @@
 // /types/express.d.ts
 import { AuthObject } from "@clerk/express";
-import type { users } from "../db/schema";
+import type { usersTable } from "../db/schema";
 
-type DbUser = typeof users.$inferSelect;
+type DbUser = typeof usersTable.$inferSelect;
 
 declare global {
   namespace Express {

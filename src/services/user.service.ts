@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
-import { emailTemplates, users } from "../db/schema";
+import { emailTemplatesTable, usersTable } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { getAuth } from "@clerk/express";
 import { verifyWebhook } from "@clerk/express/webhooks";
@@ -8,7 +8,7 @@ import { verifyWebhook } from "@clerk/express/webhooks";
 async function resolveUser(
   req: Request,
   res: Response,
-): Promise<typeof users.$inferSelect | null> {
+): Promise<typeof usersTable.$inferSelect | null> {
   const { userId: clerkId } = getAuth(req);
   if (!clerkId) {
     res.status(401).json({ error: "Unauthorized" });
@@ -16,8 +16,8 @@ async function resolveUser(
   }
   const user = await db
     .select()
-    .from(users)
-    .where(eq(users.clerkId, clerkId))
+    .from(usersTable)
+    .where(eq(usersTable.clerkId, clerkId))
     .then((r) => r[0]);
   if (!user) {
     res.status(404).json({ error: "User not found" });
@@ -31,7 +31,7 @@ export async function listUsers(req: Request, res: Response) {
     const user = await resolveUser(req, res);
     if (!user) return;
 
-    const rows = await db.select().from(users);
+    const rows = await db.select().from(usersTable);
     res.json(rows);
   } catch (err) {
     console.error("Error fetching users:", err);
@@ -46,8 +46,8 @@ export async function getUser(req: Request<{ id: string }>, res: Response) {
 
     const [row] = await db
       .select()
-      .from(users)
-      .where(eq(users.clerkId, req.params.id));
+      .from(usersTable)
+      .where(eq(usersTable.clerkId, req.params.id));
     if (!row) return res.status(404).json({ error: "User not found" });
     res.json(row);
   } catch (err) {
@@ -65,15 +65,15 @@ export async function createUserWebhook(req: Request, res: Response) {
       const data = evt.data;
       const existing = await db
         .select()
-        .from(users)
-        .where(eq(users.clerkId, data.id!));
+        .from(usersTable)
+        .where(eq(usersTable.clerkId, data.id!));
 
       if (existing.length > 0) {
         return res.send("User already exists");
       }
 
       const [created] = await db
-        .insert(users)
+        .insert(usersTable)
         .values({
           clerkId: data.id,
           firstName: data.first_name,
@@ -82,7 +82,7 @@ export async function createUserWebhook(req: Request, res: Response) {
         })
         .returning();
 
-      await db.insert(emailTemplates).values({
+      await db.insert(emailTemplatesTable).values({
         userId: created.id,
         name: "Default Outreach Template",
         subject: "Quick question about {{companyName}}",
@@ -105,13 +105,13 @@ export async function createUser(req: Request, res: Response) {
   try {
     const existing = await db
       .select()
-      .from(users)
-      .where(eq(users.clerkId, req.body.clerkId));
+      .from(usersTable)
+      .where(eq(usersTable.clerkId, req.body.clerkId));
     if (existing.length > 0) {
       return res.status(400).json({ error: "User already exists" });
     }
-    const [created] = await db.insert(users).values(req.body).returning();
-    await db.insert(emailTemplates).values({
+    const [created] = await db.insert(usersTable).values(req.body).returning();
+    await db.insert(emailTemplatesTable).values({
       userId: created.id,
       name: "Default Outreach Template",
       subject: "Quick question about {{companyName}}",
@@ -132,9 +132,9 @@ export async function updateUser(req: Request<{ id: string }>, res: Response) {
     if (!user) return;
 
     const [updated] = await db
-      .update(users)
+      .update(usersTable)
       .set(req.body)
-      .where(eq(users.clerkId, req.params.id))
+      .where(eq(usersTable.clerkId, req.params.id))
       .returning();
     if (!updated) return res.status(404).json({ error: "User not found" });
     res.json(updated);
@@ -150,8 +150,8 @@ export async function deleteUser(req: Request<{ id: string }>, res: Response) {
     if (!user) return;
 
     const [deleted] = await db
-      .delete(users)
-      .where(eq(users.clerkId, req.params.id))
+      .delete(usersTable)
+      .where(eq(usersTable.clerkId, req.params.id))
       .returning();
     if (!deleted) return res.status(404).json({ error: "User not found" });
     res.json(deleted);

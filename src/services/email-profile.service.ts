@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
-import { emailProfiles, subscriptions } from "../db/schema";
+import { emailProfilesTable, subscriptionsTable } from "../db/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import { testSmtpConnection, type SendResult } from "./mailer.service";
 import { incrementUsage } from "../lib/helpers";
@@ -14,8 +14,8 @@ export async function listEmailProfiles(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const rows = await db
     .select()
-    .from(emailProfiles)
-    .where(eq(emailProfiles.userId, userId));
+    .from(emailProfilesTable)
+    .where(eq(emailProfilesTable.userId, userId));
   res.json(rows);
 }
 
@@ -28,8 +28,8 @@ export async function getEmailProfile(
 
   const [row] = await db
     .select()
-    .from(emailProfiles)
-    .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+    .from(emailProfilesTable)
+    .where(and(eq(emailProfilesTable.userId, userId), eq(emailProfilesTable.id, id)));
   if (!row)
     throw Object.assign(new Error("Email profile not found"), {
       statusCode: 404,
@@ -40,9 +40,9 @@ export async function getEmailProfile(
 async function getUsableSubscription(userId: number) {
   const [sub] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId))
-    .orderBy(desc(subscriptions.createdAt))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, userId))
+    .orderBy(desc(subscriptionsTable.createdAt))
     .limit(1);
 
   if (!sub || !isSubscriptionUsable(sub)) {
@@ -62,8 +62,8 @@ async function assertEmailProfileWithinPlanLimit(
 
   const [{ profilesCount }] = await db
     .select({ profilesCount: count() })
-    .from(emailProfiles)
-    .where(eq(emailProfiles.userId, userId));
+    .from(emailProfilesTable)
+    .where(eq(emailProfilesTable.userId, userId));
 
   if (profilesCount >= limits.emailProfiles) {
     throw Object.assign(
@@ -83,7 +83,7 @@ export async function createEmailProfile(req: Request, res: Response) {
   await assertEmailProfileWithinPlanLimit(userId, sub.planId);
 
   const [created] = await db
-    .insert(emailProfiles)
+    .insert(emailProfilesTable)
     .values({ ...data, userId })
     .returning();
   await incrementUsage(userId, sub.id, { emailProfilesCreated: 1 });
@@ -99,9 +99,9 @@ export async function updateEmailProfile(
   const data = req.body as UpdateEmailProfileInput;
 
   const [updated] = await db
-    .update(emailProfiles)
+    .update(emailProfilesTable)
     .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)))
+    .where(and(eq(emailProfilesTable.userId, userId), eq(emailProfilesTable.id, id)))
     .returning();
   if (!updated)
     throw Object.assign(new Error("Email profile not found"), {
@@ -118,8 +118,8 @@ export async function deleteEmailProfile(
   const userId = req.dbUser!.id;
 
   await db
-    .delete(emailProfiles)
-    .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+    .delete(emailProfilesTable)
+    .where(and(eq(emailProfilesTable.userId, userId), eq(emailProfilesTable.id, id)));
   res.status(204).send();
 }
 
@@ -130,8 +130,8 @@ async function verifyEmailProfileForUser(
 ): Promise<SendResult> {
   const [profile] = await db
     .select()
-    .from(emailProfiles)
-    .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+    .from(emailProfilesTable)
+    .where(and(eq(emailProfilesTable.userId, userId), eq(emailProfilesTable.id, id)));
   if (!profile)
     throw Object.assign(new Error("Email profile not found"), {
       statusCode: 404,
@@ -156,18 +156,18 @@ async function verifyEmailProfileForUser(
 
   if (result.success) {
     await db
-      .update(emailProfiles)
+      .update(emailProfilesTable)
       .set({
         status: "active",
         lastVerifiedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+      .where(and(eq(emailProfilesTable.userId, userId), eq(emailProfilesTable.id, id)));
   } else {
     await db
-      .update(emailProfiles)
+      .update(emailProfilesTable)
       .set({ status: "error", updatedAt: new Date() })
-      .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+      .where(and(eq(emailProfilesTable.userId, userId), eq(emailProfilesTable.id, id)));
   }
 
   return result;

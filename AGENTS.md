@@ -73,10 +73,10 @@ src/
 
 - Booted from `index.ts` via `BrowserManager` + `runScraping`
 - Picks active/running copilots via `copilot-lifecycle.service`
-- Writes to `leads2` + `copilot_leads` (not the legacy `leads` table)
+- Writes to `leads` + `copilot_leads`
 - Email sending is handled separately by `periodicSendScheduler` in mailer
 
-Flow: `runScraping` → `resolveNextCopilot` → `listGoogleMapsListings` → insert `leads2` / `copilot_leads`
+Flow: `runScraping` → `resolveNextCopilot` → `listGoogleMapsListings` → insert `leads` / `copilot_leads`
 
 ### Copilot System
 
@@ -84,13 +84,13 @@ Flow: `runScraping` → `resolveNextCopilot` → `listGoogleMapsListings` → in
 - Activate a copilot (`status: active`) or `POST /copilots/:id/run` to enqueue it
 - `sendLimit` from copilot controls daily scrape/email budget
 
-### Lead Status Values (`leads2` / `copilot_leads`)
+### Lead Status Values (`leads` / `copilot_leads`)
 
 | Status | Description |
 |--------|-------------|
 | `new` | Lead ready to email (`copilot_leads`) |
 | `sent` | Email sent successfully |
-| `success` / `fail` | Scrape outcome on `leads2` |
+| `success` / `fail` | Scrape outcome on `leads` |
 
 ## DB Schema Changes
 

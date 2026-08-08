@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
-import { scrapeProfiles } from "../db/schema";
+import { scrapeProfilesTable } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import type {
   CreateScrapeProfileInput,
@@ -11,8 +11,8 @@ export async function listScrapeProfiles(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const rows = await db
     .select()
-    .from(scrapeProfiles)
-    .where(eq(scrapeProfiles.userId, userId));
+    .from(scrapeProfilesTable)
+    .where(eq(scrapeProfilesTable.userId, userId));
   res.json(rows);
 }
 
@@ -25,8 +25,8 @@ export async function getScrapeProfile(
 
   const [row] = await db
     .select()
-    .from(scrapeProfiles)
-    .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)));
+    .from(scrapeProfilesTable)
+    .where(and(eq(scrapeProfilesTable.id, id), eq(scrapeProfilesTable.userId, userId)));
   if (!row)
     throw Object.assign(
       new Error("Scrape profile not found getScrapeProfile"),
@@ -40,7 +40,7 @@ export async function createScrapeProfile(req: Request, res: Response) {
   const data = req.body as CreateScrapeProfileInput;
 
   const [created] = await db
-    .insert(scrapeProfiles)
+    .insert(scrapeProfilesTable)
     .values({ ...data, userId })
     .returning();
   res.status(201).json(created);
@@ -55,9 +55,9 @@ export async function updateScrapeProfile(
   const data = req.body as UpdateScrapeProfileInput;
 
   const [updated] = await db
-    .update(scrapeProfiles)
+    .update(scrapeProfilesTable)
     .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)))
+    .where(and(eq(scrapeProfilesTable.id, id), eq(scrapeProfilesTable.userId, userId)))
     .returning();
   if (!updated)
     throw Object.assign(
@@ -75,7 +75,7 @@ export async function deleteScrapeProfile(
   const userId = req.dbUser!.id;
 
   await db
-    .delete(scrapeProfiles)
-    .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)));
+    .delete(scrapeProfilesTable)
+    .where(and(eq(scrapeProfilesTable.id, id), eq(scrapeProfilesTable.userId, userId)));
   res.status(204).send();
 }

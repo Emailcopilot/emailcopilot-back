@@ -1,11 +1,11 @@
 import { Browser } from "playwright";
 import { db } from "../db/drizzle";
 import {
-  copilots,
-  leads2Table,
-  scrapeProfiles,
+  copilotsTable,
+  leadsTable,
+  scrapeProfilesTable,
   copilotLeadsTable,
-  scrapeJobs,
+  scrapeJobsTable,
 } from "../db/schema";
 import type { Copilot } from "../db/schema";
 import { listGoogleMapsListings } from "./scraping";
@@ -31,9 +31,9 @@ const stopScrapeJob = async ({
   errorMessage?: string;
 }) => {
   await db
-    .update(scrapeJobs)
+    .update(scrapeJobsTable)
     .set({ status, errorMessage, finishedAt: new Date() })
-    .where(eq(scrapeJobs.id, scrapeJobId));
+    .where(eq(scrapeJobsTable.id, scrapeJobId));
 };
 
 async function launchScrapeJob(copilot: Copilot): Promise<number | undefined> {
@@ -44,8 +44,8 @@ async function launchScrapeJob(copilot: Copilot): Promise<number | undefined> {
 
   const [scrapeProfile] = await db
     .select()
-    .from(scrapeProfiles)
-    .where(eq(scrapeProfiles.id, copilot.scrapeProfileId))
+    .from(scrapeProfilesTable)
+    .where(eq(scrapeProfilesTable.id, copilot.scrapeProfileId))
     .limit(1);
 
   if (!scrapeProfile) {
@@ -54,7 +54,7 @@ async function launchScrapeJob(copilot: Copilot): Promise<number | undefined> {
   }
 
   const [scrapeJob] = await db
-    .insert(scrapeJobs)
+    .insert(scrapeJobsTable)
     .values({
       userId: copilot.userId,
       scrapeProfileId: copilot.scrapeProfileId,
@@ -64,9 +64,9 @@ async function launchScrapeJob(copilot: Copilot): Promise<number | undefined> {
     .returning();
 
   await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
-    .where(eq(copilots.id, copilot.id));
+    .where(eq(copilotsTable.id, copilot.id));
 
   console.log(
     `🔍 Launched scrape job ${scrapeJob.id} for copilot ${copilot.id}`,
@@ -79,11 +79,11 @@ async function getRunningScrapeJob(copilot: Copilot) {
   if (copilot.lastJobId) {
     const [jobById] = await db
       .select()
-      .from(scrapeJobs)
+      .from(scrapeJobsTable)
       .where(
         and(
-          eq(scrapeJobs.id, copilot.lastJobId),
-          eq(scrapeJobs.status, "running"),
+          eq(scrapeJobsTable.id, copilot.lastJobId),
+          eq(scrapeJobsTable.status, "running"),
         ),
       )
       .limit(1);
@@ -99,15 +99,15 @@ async function getRunningScrapeJob(copilot: Copilot) {
 
   const [scrapeJob] = await db
     .select()
-    .from(scrapeJobs)
+    .from(scrapeJobsTable)
     .where(
       and(
-        eq(scrapeJobs.status, "running"),
-        eq(scrapeJobs.scrapeProfileId, copilot.scrapeProfileId),
-        eq(scrapeJobs.userId, copilot.userId),
+        eq(scrapeJobsTable.status, "running"),
+        eq(scrapeJobsTable.scrapeProfileId, copilot.scrapeProfileId),
+        eq(scrapeJobsTable.userId, copilot.userId),
       ),
     )
-    .orderBy(desc(scrapeJobs.createdAt))
+    .orderBy(desc(scrapeJobsTable.createdAt))
     .limit(1);
 
   return scrapeJob ?? null;
@@ -201,8 +201,8 @@ async function runScrapeJob(
 
   const [scrapeProfile] = await db
     .select()
-    .from(scrapeProfiles)
-    .where(eq(scrapeProfiles.id, copilot.scrapeProfileId))
+    .from(scrapeProfilesTable)
+    .where(eq(scrapeProfilesTable.id, copilot.scrapeProfileId))
     .limit(1);
 
   if (!scrapeProfile) {
@@ -280,9 +280,9 @@ async function runScrapeJob(
   const copilotId = copilot.id;
 
   const existingLeads = await db
-    .select({ placeId: leads2Table.placeId })
-    .from(leads2Table)
-    .innerJoin(copilotLeadsTable, eq(copilotLeadsTable.leadId, leads2Table.id))
+    .select({ placeId: leadsTable.placeId })
+    .from(leadsTable)
+    .innerJoin(copilotLeadsTable, eq(copilotLeadsTable.leadId, leadsTable.id))
     .where(eq(copilotLeadsTable.copilotId, copilotId));
 
   const recordFailedLead = async (listing: {
@@ -297,7 +297,7 @@ async function runScrapeJob(
 
     // place_id is globally unique — ignore if another scrape already stored it
     await db
-      .insert(leads2Table)
+      .insert(leadsTable)
       .values({
         companyName: listing.name || "",
         email: "",
@@ -308,7 +308,7 @@ async function runScrapeJob(
         placeId: listing.placeId,
         status: "fail",
       })
-      .onConflictDoNothing({ target: leads2Table.placeId });
+      .onConflictDoNothing({ target: leadsTable.placeId });
   };
 
   let listings;
@@ -327,10 +327,10 @@ async function runScrapeJob(
           return false;
         }
         const failedLeads = await db.$count(
-          leads2Table,
+          leadsTable,
           and(
-            eq(leads2Table.status, "fail"),
-            eq(leads2Table.placeId, card.placeId),
+            eq(leadsTable.status, "fail"),
+            eq(leadsTable.placeId, card.placeId),
           ),
         );
         return failedLeads === 0;
@@ -356,7 +356,7 @@ async function runScrapeJob(
 
         await db.transaction(async (tx) => {
           const [lead] = await tx
-            .insert(leads2Table)
+            .insert(leadsTable)
             .values({
               companyName: listing.name || "",
               email: listing.email || "",
@@ -368,7 +368,7 @@ async function runScrapeJob(
               status: "success",
             })
             .onConflictDoUpdate({
-              target: leads2Table.placeId,
+              target: leadsTable.placeId,
               set: {
                 companyName: listing.name || "",
                 email: listing.email || "",
@@ -400,20 +400,20 @@ async function runScrapeJob(
           });
 
           await tx
-            .update(scrapeJobs)
+            .update(scrapeJobsTable)
             .set({
-              leadsFound: sql<number>`${scrapeJobs.leadsFound} + 1`,
+              leadsFound: sql<number>`${scrapeJobsTable.leadsFound} + 1`,
             })
-            .where(eq(scrapeJobs.id, runningJob.id));
+            .where(eq(scrapeJobsTable.id, runningJob.id));
         });
       },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const [jobState] = await db
-      .select({ leadsFound: scrapeJobs.leadsFound })
-      .from(scrapeJobs)
-      .where(eq(scrapeJobs.id, runningJob.id))
+      .select({ leadsFound: scrapeJobsTable.leadsFound })
+      .from(scrapeJobsTable)
+      .where(eq(scrapeJobsTable.id, runningJob.id))
       .limit(1);
 
     if (jobState && jobState.leadsFound > 0) {

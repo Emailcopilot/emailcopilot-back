@@ -1,18 +1,20 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import {
-  copilots,
-  subscriptions,
-  scrapeProfiles,
-  emailProfiles,
-  emailTemplates,
-  scrapeJobs,
-  emailLogs,
+  copilotsTable,
+  subscriptionsTable,
+  scrapeProfilesTable,
+  emailProfilesTable,
+  emailTemplatesTable,
+  scrapeJobsTable,
 } from "../db/schema";
-import { and, desc, eq, gte, count, getTableColumns, ne } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, ne } from "drizzle-orm";
 import { incrementUsage } from "../lib/helpers";
 import { getPlanLimits, isSubscriptionUsable } from "../lib/billing";
-import { getCopilotNewLeadCount } from "./copilot-lifecycle.service";
+import {
+  getCopilotNewLeadCount,
+  getCopilotSentTodayCount,
+} from "./copilot-lifecycle.service";
 import type {
   CreateCopilotInput,
   UpdateCopilotInput,
@@ -22,9 +24,9 @@ import type {
 async function getActiveSubscription(userId: number) {
   const subs = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId))
-    .orderBy(desc(subscriptions.createdAt));
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, userId))
+    .orderBy(desc(subscriptionsTable.createdAt));
   const sub = subs[0];
   if (!sub || !isSubscriptionUsable(sub))
     throw Object.assign(new Error("No active subscription found"), {
@@ -39,8 +41,8 @@ async function assertCopilotWithinPlanLimit(userId: number, planId: string) {
 
   const [{ copilotsCount }] = await db
     .select({ copilotsCount: count() })
-    .from(copilots)
-    .where(and(eq(copilots.userId, userId), ne(copilots.status, "archived")));
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.userId, userId), ne(copilotsTable.status, "archived")));
 
   if (copilotsCount >= limits.copilots) {
     throw Object.assign(
@@ -55,8 +57,8 @@ async function assertCopilotWithinPlanLimit(userId: number, planId: string) {
 async function validateCopilotCanActivate(copilotId: number) {
   const [copilot] = await db
     .select()
-    .from(copilots)
-    .where(eq(copilots.id, copilotId));
+    .from(copilotsTable)
+    .where(eq(copilotsTable.id, copilotId));
 
   if (!copilot) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
@@ -89,8 +91,8 @@ async function validateCopilotCanActivate(copilotId: number) {
 
   const [profile] = await db
     .select()
-    .from(emailProfiles)
-    .where(eq(emailProfiles.id, copilot.emailProfileId));
+    .from(emailProfilesTable)
+    .where(eq(emailProfilesTable.id, copilot.emailProfileId));
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw Object.assign(new Error("Email profile is not properly configured"), {
@@ -104,17 +106,17 @@ export async function listCopilots(req: Request, res: Response) {
 
   const rows = await db
     .select({
-      ...getTableColumns(copilots),
-      scrapeProfile: getTableColumns(scrapeProfiles),
-      emailProfile: getTableColumns(emailProfiles),
-      template: getTableColumns(emailTemplates),
+      ...getTableColumns(copilotsTable),
+      scrapeProfile: getTableColumns(scrapeProfilesTable),
+      emailProfile: getTableColumns(emailProfilesTable),
+      template: getTableColumns(emailTemplatesTable),
     })
-    .from(copilots)
-    .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
-    .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
-    .leftJoin(emailTemplates, eq(copilots.templateId, emailTemplates.id))
-    .orderBy(desc(copilots.createdAt))
-    .where(eq(copilots.userId, userId));
+    .from(copilotsTable)
+    .leftJoin(scrapeProfilesTable, eq(copilotsTable.scrapeProfileId, scrapeProfilesTable.id))
+    .leftJoin(emailProfilesTable, eq(copilotsTable.emailProfileId, emailProfilesTable.id))
+    .leftJoin(emailTemplatesTable, eq(copilotsTable.templateId, emailTemplatesTable.id))
+    .orderBy(desc(copilotsTable.createdAt))
+    .where(eq(copilotsTable.userId, userId));
 
   res.json(rows);
 }
@@ -125,16 +127,16 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
 
   const [row] = await db
     .select({
-      ...getTableColumns(copilots),
-      scrapeProfile: getTableColumns(scrapeProfiles),
-      emailProfile: getTableColumns(emailProfiles),
-      template: getTableColumns(emailTemplates),
+      ...getTableColumns(copilotsTable),
+      scrapeProfile: getTableColumns(scrapeProfilesTable),
+      emailProfile: getTableColumns(emailProfilesTable),
+      template: getTableColumns(emailTemplatesTable),
     })
-    .from(copilots)
-    .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
-    .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
-    .leftJoin(emailTemplates, eq(copilots.templateId, emailTemplates.id))
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+    .from(copilotsTable)
+    .leftJoin(scrapeProfilesTable, eq(copilotsTable.scrapeProfileId, scrapeProfilesTable.id))
+    .leftJoin(emailProfilesTable, eq(copilotsTable.emailProfileId, emailProfilesTable.id))
+    .leftJoin(emailTemplatesTable, eq(copilotsTable.templateId, emailTemplatesTable.id))
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!row)
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
@@ -164,7 +166,7 @@ export async function createCopilot(req: Request, res: Response) {
 
     if (!scrapeProfileId && scrapeProfile) {
       const [profile] = await tx
-        .insert(scrapeProfiles)
+        .insert(scrapeProfilesTable)
         .values({ ...scrapeProfile, userId })
         .returning();
       scrapeProfileId = profile.id;
@@ -173,7 +175,7 @@ export async function createCopilot(req: Request, res: Response) {
 
     if (!emailProfileId && emailProfile) {
       const [profile] = await tx
-        .insert(emailProfiles)
+        .insert(emailProfilesTable)
         .values({ ...emailProfile, userId })
         .returning();
       emailProfileId = profile.id;
@@ -182,7 +184,7 @@ export async function createCopilot(req: Request, res: Response) {
 
     if (!templateId && template) {
       const [createdTemplate] = await tx
-        .insert(emailTemplates)
+        .insert(emailTemplatesTable)
         .values({ ...template, userId })
         .returning();
       templateId = createdTemplate.id;
@@ -190,7 +192,7 @@ export async function createCopilot(req: Request, res: Response) {
     }
 
     const [row] = await tx
-      .insert(copilots)
+      .insert(copilotsTable)
       .values({ ...data, userId, scrapeProfileId, emailProfileId, templateId })
       .returning();
 
@@ -199,8 +201,8 @@ export async function createCopilot(req: Request, res: Response) {
     if (scrapeProfileId && !scrapeProfileData) {
       const [profile] = await tx
         .select()
-        .from(scrapeProfiles)
-        .where(eq(scrapeProfiles.id, scrapeProfileId));
+        .from(scrapeProfilesTable)
+        .where(eq(scrapeProfilesTable.id, scrapeProfileId));
 
       scrapeProfileData = profile;
     }
@@ -208,8 +210,8 @@ export async function createCopilot(req: Request, res: Response) {
     if (emailProfileId && !emailProfileData) {
       const [profile] = await tx
         .select()
-        .from(emailProfiles)
-        .where(eq(emailProfiles.id, emailProfileId));
+        .from(emailProfilesTable)
+        .where(eq(emailProfilesTable.id, emailProfileId));
 
       emailProfileData = profile;
     }
@@ -217,8 +219,8 @@ export async function createCopilot(req: Request, res: Response) {
     if (templateId && !templateData) {
       const [createdTemplate] = await tx
         .select()
-        .from(emailTemplates)
-        .where(eq(emailTemplates.id, templateId));
+        .from(emailTemplatesTable)
+        .where(eq(emailTemplatesTable.id, templateId));
 
       templateData = createdTemplate;
     }
@@ -257,7 +259,7 @@ export async function updateCopilot(
     let templateData = null;
     if (!scrapeProfileId && scrapeProfile) {
       const [profile] = await tx
-        .insert(scrapeProfiles)
+        .insert(scrapeProfilesTable)
         .values({ ...scrapeProfile, userId })
         .returning();
       scrapeProfileId = profile.id;
@@ -266,7 +268,7 @@ export async function updateCopilot(
 
     if (!emailProfileId && emailProfile) {
       const [profile] = await tx
-        .insert(emailProfiles)
+        .insert(emailProfilesTable)
         .values({ ...emailProfile, userId })
         .returning();
       emailProfileId = profile.id;
@@ -275,7 +277,7 @@ export async function updateCopilot(
 
     if (!templateId && template) {
       const [createdTemplate] = await tx
-        .insert(emailTemplates)
+        .insert(emailTemplatesTable)
         .values({ ...template, userId })
         .returning();
       templateId = createdTemplate.id;
@@ -283,7 +285,7 @@ export async function updateCopilot(
     }
 
     const [row] = await tx
-      .update(copilots)
+      .update(copilotsTable)
       .set({
         ...data,
         scrapeProfileId,
@@ -291,7 +293,7 @@ export async function updateCopilot(
         templateId,
         updatedAt: new Date(),
       })
-      .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
+      .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)))
       .returning();
 
     if (!row)
@@ -300,8 +302,8 @@ export async function updateCopilot(
     if (scrapeProfileId && !scrapeProfileData) {
       const [profile] = await tx
         .select()
-        .from(scrapeProfiles)
-        .where(eq(scrapeProfiles.id, scrapeProfileId));
+        .from(scrapeProfilesTable)
+        .where(eq(scrapeProfilesTable.id, scrapeProfileId));
 
       scrapeProfileData = profile;
     }
@@ -309,8 +311,8 @@ export async function updateCopilot(
     if (emailProfileId && !emailProfileData) {
       const [profile] = await tx
         .select()
-        .from(emailProfiles)
-        .where(eq(emailProfiles.id, emailProfileId));
+        .from(emailProfilesTable)
+        .where(eq(emailProfilesTable.id, emailProfileId));
 
       emailProfileData = profile;
     }
@@ -318,8 +320,8 @@ export async function updateCopilot(
     if (templateId && !templateData) {
       const [createdTemplate] = await tx
         .select()
-        .from(emailTemplates)
-        .where(eq(emailTemplates.id, templateId));
+        .from(emailTemplatesTable)
+        .where(eq(emailTemplatesTable.id, templateId));
 
       templateData = createdTemplate;
     }
@@ -343,8 +345,8 @@ export async function deleteCopilot(
   const userId = req.dbUser!.id;
 
   await db
-    .delete(copilots)
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+    .delete(copilotsTable)
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   res.status(204).send();
 }
@@ -358,8 +360,8 @@ export async function duplicateCopilot(
 
   const [original] = await db
     .select()
-    .from(copilots)
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!original) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
@@ -374,7 +376,7 @@ export async function duplicateCopilot(
       : "Copy of " + original.name;
 
   const [created] = await db
-    .insert(copilots)
+    .insert(copilotsTable)
     .values({
       userId,
       name: newName,
@@ -404,9 +406,9 @@ export async function updateCopilotStatus(
   const data = req.body as UpdateCopilotStatusInput;
 
   const [updated] = await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({ status: data.status, updatedAt: new Date() })
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)))
     .returning();
 
   if (!updated)
@@ -425,8 +427,8 @@ export async function runCopilot(req: Request<{ id: string }>, res: Response) {
 
   const [copilot] = await db
     .select()
-    .from(copilots)
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!copilot) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
@@ -439,14 +441,14 @@ export async function runCopilot(req: Request<{ id: string }>, res: Response) {
   );
 
   const [updated] = await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({
       status: "active",
       lastRunAt: new Date(),
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)))
     .returning();
 
   res.json({
@@ -465,8 +467,8 @@ export async function getCopilotStatus(
 
   const [copilot] = await db
     .select()
-    .from(copilots)
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!copilot) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
@@ -474,35 +476,17 @@ export async function getCopilotStatus(
 
   let scrapeJob = null;
   if (copilot.lastJobId) {
-    scrapeJob = await db.query.scrapeJobs.findFirst({
-      where: eq(scrapeJobs.id, copilot.lastJobId),
+    scrapeJob = await db.query.scrapeJobsTable.findFirst({
+      where: eq(scrapeJobsTable.id, copilot.lastJobId),
     });
   }
 
-  let emailStats = null;
-  if (copilot.lastRunAt) {
-    const startOfDay = new Date(copilot.lastRunAt);
-    startOfDay.setHours(0, 0, 0, 0);
+  const [newLeadsCount, sentToday] = await Promise.all([
+    getCopilotNewLeadCount(id),
+    getCopilotSentTodayCount(id),
+  ]);
 
-    const [stats] = await db
-      .select({
-        sent: count(),
-      })
-      .from(emailLogs)
-      .where(
-        and(
-          eq(emailLogs.usersId, userId),
-          eq(emailLogs.status, "sent"),
-          gte(emailLogs.sentAt, startOfDay),
-        ),
-      );
-
-    emailStats = {
-      sentToday: Number(stats?.sent ?? 0),
-    };
-  }
-
-  const newLeadsCount = await getCopilotNewLeadCount(id);
+  const emailStats = { sentToday };
 
   res.json({
     id: copilot.id,

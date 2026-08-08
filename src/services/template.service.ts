@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
-import { emailTemplates } from "../db/schema";
+import { emailTemplatesTable } from "../db/schema";
 import { eq, desc, and } from "drizzle-orm";
 import type {
   CreateTemplateInput,
@@ -13,9 +13,9 @@ export async function listTemplates(req: Request, res: Response) {
 
   const rows = await db
     .select()
-    .from(emailTemplates)
-    .where(eq(emailTemplates.userId, userId))
-    .orderBy(desc(emailTemplates.createdAt));
+    .from(emailTemplatesTable)
+    .where(eq(emailTemplatesTable.userId, userId))
+    .orderBy(desc(emailTemplatesTable.createdAt));
 
   res.json(rows);
 }
@@ -26,8 +26,8 @@ export async function getTemplate(req: Request<{ id: string }>, res: Response) {
 
   const [row] = await db
     .select()
-    .from(emailTemplates)
-    .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)));
+    .from(emailTemplatesTable)
+    .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)));
 
   if (!row)
     throw Object.assign(new Error("Template not found"), { statusCode: 404 });
@@ -40,7 +40,7 @@ export async function createTemplate(req: Request, res: Response) {
   const data = req.body as CreateTemplateInput;
 
   const [created] = await db
-    .insert(emailTemplates)
+    .insert(emailTemplatesTable)
     .values({ ...data, userId })
     .returning();
 
@@ -58,9 +58,9 @@ export async function updateTemplate(
   console.log("Updating template", { id, userId, data });
 
   const [updated] = await db
-    .update(emailTemplates)
+    .update(emailTemplatesTable)
     .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)))
+    .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)))
     .returning()
     .catch((err) => {
       console.error("Database error during update:", err);
@@ -79,9 +79,9 @@ export async function patchTemplate(
   data: PatchTemplateInput,
 ) {
   const [updated] = await db
-    .update(emailTemplates)
+    .update(emailTemplatesTable)
     .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)))
+    .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)))
     .returning();
 
   if (!updated)
@@ -98,8 +98,8 @@ export async function deleteTemplate(
   const userId = req.dbUser!.id;
 
   await db
-    .delete(emailTemplates)
-    .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)));
+    .delete(emailTemplatesTable)
+    .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)));
 
   res.status(204).send();
 }
@@ -113,15 +113,15 @@ export async function duplicateTemplate(
 
   const [original] = await db
     .select()
-    .from(emailTemplates)
-    .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)));
+    .from(emailTemplatesTable)
+    .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)));
 
   if (!original)
     throw Object.assign(new Error("Template not found"), { statusCode: 404 });
 
   const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = original;
   const [duplicate] = await db
-    .insert(emailTemplates)
+    .insert(emailTemplatesTable)
     .values({ ...rest, name: `${original.name} (Copy)`, userId })
     .returning();
 

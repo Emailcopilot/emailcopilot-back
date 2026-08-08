@@ -1,10 +1,10 @@
 import { db } from "../db/drizzle";
 import {
-  copilots,
+  copilotsTable,
   copilotLeadsTable,
-  scrapeJobs,
-  subscriptions,
-  usage,
+  scrapeJobsTable,
+  subscriptionsTable,
+  usageTable,
 } from "../db/schema";
 import type { Copilot } from "../db/schema";
 import { and, asc, count, desc, eq, gte, lte } from "drizzle-orm";
@@ -34,7 +34,9 @@ export type CopilotProgress = {
   scrapeNeeded: number;
 };
 
-async function getCopilotSentTodayCount(copilotId: number): Promise<number> {
+export async function getCopilotSentTodayCount(
+  copilotId: number,
+): Promise<number> {
   const [{ count: sentToday }] = await db
     .select({ count: count() })
     .from(copilotLeadsTable)
@@ -54,9 +56,9 @@ export async function getActiveSubscription(
 ): Promise<SubscriptionInfo | null> {
   const [subscription] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId))
-    .orderBy(desc(subscriptions.createdAt))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, userId))
+    .orderBy(desc(subscriptionsTable.createdAt))
     .limit(1);
 
   if (!subscription || !isSubscriptionUsable(subscription)) {
@@ -71,13 +73,13 @@ export async function getActiveSubscription(
   const now = new Date();
   const [currentUsage] = await db
     .select()
-    .from(usage)
+    .from(usageTable)
     .where(
       and(
-        eq(usage.userId, userId),
-        eq(usage.subscriptionId, subscription.id),
-        lte(usage.periodStart, now),
-        gte(usage.periodEnd, now),
+        eq(usageTable.userId, userId),
+        eq(usageTable.subscriptionId, subscription.id),
+        lte(usageTable.periodStart, now),
+        gte(usageTable.periodEnd, now),
       ),
     )
     .limit(1);
@@ -139,13 +141,13 @@ const DAILY_LIMIT_MSG =
 
 export async function setCopilotActive(copilotId: number, reason?: string) {
   await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({
       status: "active",
       lastError: reason ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(copilots.id, copilotId));
+    .where(eq(copilotsTable.id, copilotId));
   console.log(
     `🔄 Copilot ${copilotId} set to active${reason ? `: ${reason}` : ""}`,
   );
@@ -153,9 +155,9 @@ export async function setCopilotActive(copilotId: number, reason?: string) {
 
 async function setCopilotRunning(copilotId: number): Promise<Copilot> {
   const [running] = await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({ status: "running", lastError: null, updatedAt: new Date() })
-    .where(eq(copilots.id, copilotId))
+    .where(eq(copilotsTable.id, copilotId))
     .returning();
 
   console.log(`🚀 Copilot ${copilotId} set to running`);
@@ -181,9 +183,9 @@ export async function syncCopilotsDailyStatus(): Promise<Copilot | null> {
 
   const activeCopilots = await db
     .select()
-    .from(copilots)
-    .where(eq(copilots.status, "active"))
-    .orderBy(asc(copilots.updatedAt));
+    .from(copilotsTable)
+    .where(eq(copilotsTable.status, "active"))
+    .orderBy(asc(copilotsTable.updatedAt));
 
   for (const copilot of activeCopilots) {
     const subscription = await getActiveSubscription(copilot.userId);
@@ -218,41 +220,41 @@ export async function syncCopilotsDailyStatus(): Promise<Copilot | null> {
 
 export async function pauseCopilot(copilotId: number, reason: string) {
   await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({
       status: "paused",
       lastError: reason,
       updatedAt: new Date(),
     })
-    .where(eq(copilots.id, copilotId));
+    .where(eq(copilotsTable.id, copilotId));
   console.log(`⏸️  Copilot ${copilotId} paused: ${reason}`);
 }
 
 export async function completeCopilot(copilotId: number) {
   await db
-    .update(copilots)
+    .update(copilotsTable)
     .set({
       status: "completed",
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(eq(copilots.id, copilotId));
+    .where(eq(copilotsTable.id, copilotId));
   console.log(`✅ Copilot ${copilotId} completed`);
 }
 
 async function resolveCopilotWithPendingScrapeJob(): Promise<Copilot | null> {
   const [row] = await db
-    .select({ copilot: copilots })
-    .from(scrapeJobs)
+    .select({ copilot: copilotsTable })
+    .from(scrapeJobsTable)
     .innerJoin(
-      copilots,
+      copilotsTable,
       and(
-        eq(copilots.scrapeProfileId, scrapeJobs.scrapeProfileId),
-        eq(copilots.userId, scrapeJobs.userId),
+        eq(copilotsTable.scrapeProfileId, scrapeJobsTable.scrapeProfileId),
+        eq(copilotsTable.userId, scrapeJobsTable.userId),
       ),
     )
-    .where(eq(scrapeJobs.status, "running"))
-    .orderBy(desc(scrapeJobs.createdAt))
+    .where(eq(scrapeJobsTable.status, "running"))
+    .orderBy(desc(scrapeJobsTable.createdAt))
     .limit(1);
 
   if (!row) {
@@ -290,9 +292,9 @@ export async function resolveNextCopilot(): Promise<Copilot | null> {
 export async function getRunningCopilots(): Promise<Copilot[]> {
   return db
     .select()
-    .from(copilots)
-    .where(eq(copilots.status, "running"))
-    .orderBy(asc(copilots.updatedAt));
+    .from(copilotsTable)
+    .where(eq(copilotsTable.status, "running"))
+    .orderBy(asc(copilotsTable.updatedAt));
 }
 
 export async function getLastCopilotSendAt(

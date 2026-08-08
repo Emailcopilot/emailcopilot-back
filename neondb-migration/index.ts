@@ -2,12 +2,12 @@ import "dotenv/config";
 import pg from "pg";
 import { db } from "../src/db/drizzle";
 import {
-  copilots,
-  emailProfiles,
-  emailTemplates,
-  scrapeProfiles,
-  subscriptions,
-  users,
+  copilotsTable,
+  emailProfilesTable,
+  emailTemplatesTable,
+  scrapeProfilesTable,
+  subscriptionsTable,
+  usersTable,
 } from "../src/db/schema";
 
 const neonDB = new pg.Pool({
@@ -29,10 +29,10 @@ const migrateSubscriptions = async () => {
     };
 
     await db
-      .insert(subscriptions)
+      .insert(subscriptionsTable)
       .values(data)
       .onConflictDoUpdate({
-        target: [subscriptions.id],
+        target: [subscriptionsTable.id],
         set: data,
       });
   }
@@ -55,10 +55,10 @@ const migrateUsers = async () => {
     };
 
     await db
-      .insert(users)
+      .insert(usersTable)
       .values(data)
       .onConflictDoUpdate({
-        target: [users.id],
+        target: [usersTable.id],
         set: data,
       });
   }
@@ -87,10 +87,10 @@ const migrateEmailProfiles = async () => {
     };
 
     await db
-      .insert(emailProfiles)
+      .insert(emailProfilesTable)
       .values(data)
       .onConflictDoUpdate({
-        target: [emailProfiles.id],
+        target: [emailProfilesTable.id],
         set: data,
       });
   }
@@ -114,10 +114,10 @@ const migrateScrapeProfiles = async () => {
     };
 
     await db
-      .insert(scrapeProfiles)
+      .insert(scrapeProfilesTable)
       .values(scrapeProfileData)
       .onConflictDoUpdate({
-        target: [scrapeProfiles.id],
+        target: [scrapeProfilesTable.id],
         set: scrapeProfileData,
       });
   }
@@ -139,10 +139,10 @@ const migrateEmailTemplates = async () => {
     };
 
     await db
-      .insert(emailTemplates)
+      .insert(emailTemplatesTable)
       .values(emailTemplateData)
       .onConflictDoUpdate({
-        target: [emailTemplates.id],
+        target: [emailTemplatesTable.id],
         set: emailTemplateData,
       });
   }
@@ -163,10 +163,10 @@ const migrateCopilots = async () => {
     };
 
     await db
-      .insert(copilots)
+      .insert(copilotsTable)
       .values(copilotData)
       .onConflictDoUpdate({
-        target: [copilots.id],
+        target: [copilotsTable.id],
         set: copilotData,
       });
   }

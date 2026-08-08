@@ -1,10 +1,10 @@
 import nodemailer from "nodemailer";
 import {
-  emailTemplates,
-  emailProfiles,
-  copilots,
+  emailTemplatesTable,
+  emailProfilesTable,
+  copilotsTable,
   copilotLeadsTable,
-  leads2Table,
+  leadsTable,
 } from "../db/schema";
 import { eq, and, sql, asc, isNotNull, ne } from "drizzle-orm";
 import type { EmailTemplate } from "../db/types";
@@ -42,8 +42,8 @@ export interface SendResult {
 async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
   const [copilot] = await db
     .select()
-    .from(copilots)
-    .where(eq(copilots.id, copilotId));
+    .from(copilotsTable)
+    .where(eq(copilotsTable.id, copilotId));
 
   if (!copilot || !copilot.emailProfileId) {
     throw new Error("Copilot has no email profile configured.");
@@ -51,8 +51,8 @@ async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
 
   const [profile] = await db
     .select()
-    .from(emailProfiles)
-    .where(eq(emailProfiles.id, copilot.emailProfileId));
+    .from(emailProfilesTable)
+    .where(eq(emailProfilesTable.id, copilot.emailProfileId));
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw new Error("Email profile not properly configured.");
@@ -73,8 +73,8 @@ async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
 async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
   const [copilot] = await db
     .select()
-    .from(copilots)
-    .where(eq(copilots.id, copilotId));
+    .from(copilotsTable)
+    .where(eq(copilotsTable.id, copilotId));
 
   if (!copilot || !copilot.templateId) {
     throw new Error("Copilot has no template configured.");
@@ -82,8 +82,8 @@ async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
 
   const [template] = await db
     .select()
-    .from(emailTemplates)
-    .where(eq(emailTemplates.id, copilot.templateId));
+    .from(emailTemplatesTable)
+    .where(eq(emailTemplatesTable.id, copilot.templateId));
 
   if (!template) {
     throw new Error("Template not found.");
@@ -187,9 +187,9 @@ async function sendCopilotLead(
     });
 
     const [copilot] = await db
-      .select({ userId: copilots.userId })
-      .from(copilots)
-      .where(eq(copilots.id, copilotId))
+      .select({ userId: copilotsTable.userId })
+      .from(copilotsTable)
+      .where(eq(copilotsTable.id, copilotId))
       .limit(1);
 
     await db.transaction(async (tx) => {
@@ -199,13 +199,13 @@ async function sendCopilotLead(
         .where(eq(copilotLeadsTable.id, copilotLeadId));
 
       await tx
-        .update(copilots)
+        .update(copilotsTable)
         .set({
-          emailsSent: sql`${copilots.emailsSent} + 1`,
+          emailsSent: sql`${copilotsTable.emailsSent} + 1`,
           lastRunAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(copilots.id, copilotId));
+        .where(eq(copilotsTable.id, copilotId));
     });
 
     if (copilot) {
@@ -282,16 +282,16 @@ async function periodicSend(): Promise<boolean> {
     const [pendingLead] = await db
       .select({
         copilotLeadId: copilotLeadsTable.id,
-        lead: leads2Table,
+        lead: leadsTable,
       })
       .from(copilotLeadsTable)
-      .innerJoin(leads2Table, eq(copilotLeadsTable.leadId, leads2Table.id))
+      .innerJoin(leadsTable, eq(copilotLeadsTable.leadId, leadsTable.id))
       .where(
         and(
           eq(copilotLeadsTable.copilotId, copilot.id),
           eq(copilotLeadsTable.status, "new"),
-          isNotNull(leads2Table.email),
-          ne(leads2Table.email, ""),
+          isNotNull(leadsTable.email),
+          ne(leadsTable.email, ""),
         ),
       )
       .orderBy(asc(copilotLeadsTable.createdAt))

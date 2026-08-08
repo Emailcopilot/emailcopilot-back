@@ -7,13 +7,13 @@ import nodemailer from "nodemailer";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../src/db/drizzle";
 import {
-  users,
-  emailProfiles,
-  emailTemplates,
-  scrapeProfiles,
-  copilots,
-  subscriptions,
-  usage,
+  usersTable,
+  emailProfilesTable,
+  emailTemplatesTable,
+  scrapeProfilesTable,
+  copilotsTable,
+  subscriptionsTable,
+  usageTable,
 } from "../src/db/schema";
 
 type TestUserConfig = {
@@ -110,13 +110,13 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [user] = await db
     .select()
-    .from(users)
-    .where(eq(users.email, config.email));
+    .from(usersTable)
+    .where(eq(usersTable.email, config.email));
 
   const { searchQuery, planId, copilotName, ...userFields } = config;
 
   if (!user) {
-    [user] = await db.insert(users).values(userFields).returning();
+    [user] = await db.insert(usersTable).values(userFields).returning();
     console.log("✅ Created user", user.id);
   } else {
     console.log("ℹ️  Using existing user", user.id);
@@ -126,13 +126,13 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [subscription] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, user.id))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, user.id))
     .limit(1);
 
   if (!subscription) {
     [subscription] = await db
-      .insert(subscriptions)
+      .insert(subscriptionsTable)
       .values({
         userId: user.id,
         planId,
@@ -148,13 +148,13 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [usageRow] = await db
     .select()
-    .from(usage)
-    .where(eq(usage.userId, user.id))
+    .from(usageTable)
+    .where(eq(usageTable.userId, user.id))
     .limit(1);
 
   if (!usageRow) {
     [usageRow] = await db
-      .insert(usage)
+      .insert(usageTable)
       .values({
         userId: user.id,
         subscriptionId: subscription.id,
@@ -167,13 +167,13 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [scrapeProfile] = await db
     .select()
-    .from(scrapeProfiles)
-    .where(eq(scrapeProfiles.userId, user.id))
+    .from(scrapeProfilesTable)
+    .where(eq(scrapeProfilesTable.userId, user.id))
     .limit(1);
 
   if (!scrapeProfile) {
     [scrapeProfile] = await db
-      .insert(scrapeProfiles)
+      .insert(scrapeProfilesTable)
       .values({
         userId: user.id,
         name: `${config.firstName} scrape profile`,
@@ -186,8 +186,8 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [emailProfile] = await db
     .select()
-    .from(emailProfiles)
-    .where(eq(emailProfiles.userId, user.id))
+    .from(emailProfilesTable)
+    .where(eq(emailProfilesTable.userId, user.id))
     .limit(1);
 
   let smtp: { email: string; pass: string; host: string; port: number };
@@ -197,7 +197,7 @@ async function ensureTestUser(config: TestUserConfig) {
     console.log("✅ Ethereal SMTP account:", smtp.email);
 
     [emailProfile] = await db
-      .insert(emailProfiles)
+      .insert(emailProfilesTable)
       .values({
         userId: user.id,
         profileName: "Test SMTP",
@@ -224,13 +224,13 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [template] = await db
     .select()
-    .from(emailTemplates)
-    .where(eq(emailTemplates.userId, user.id))
+    .from(emailTemplatesTable)
+    .where(eq(emailTemplatesTable.userId, user.id))
     .limit(1);
 
   if (!template) {
     [template] = await db
-      .insert(emailTemplates)
+      .insert(emailTemplatesTable)
       .values({
         userId: user.id,
         name: "Default Outreach Template",
@@ -245,13 +245,13 @@ async function ensureTestUser(config: TestUserConfig) {
 
   let [copilot] = await db
     .select()
-    .from(copilots)
-    .where(eq(copilots.userId, user.id))
+    .from(copilotsTable)
+    .where(eq(copilotsTable.userId, user.id))
     .limit(1);
 
   if (!copilot) {
     [copilot] = await db
-      .insert(copilots)
+      .insert(copilotsTable)
       .values({
         userId: user.id,
         name: copilotName,
@@ -267,7 +267,7 @@ async function ensureTestUser(config: TestUserConfig) {
     console.log("✅ Created copilot", copilot.id);
   } else {
     [copilot] = await db
-      .update(copilots)
+      .update(copilotsTable)
       .set({
         emailProfileId: emailProfile!.id,
         scrapeProfileId: scrapeProfile!.id,
@@ -276,7 +276,7 @@ async function ensureTestUser(config: TestUserConfig) {
         settings: { schedule: { runAt: "09:00" } },
         updatedAt: new Date(),
       })
-      .where(eq(copilots.id, copilot.id))
+      .where(eq(copilotsTable.id, copilot.id))
       .returning();
     console.log("ℹ️  Updated copilot links", copilot.id);
   }
@@ -303,8 +303,7 @@ async function truncateAllTables() {
   await db.execute(sql`TRUNCATE TABLE usage CASCADE`);
   await db.execute(sql`TRUNCATE TABLE scrape_jobs CASCADE`);
   await db.execute(sql`TRUNCATE TABLE copilot_leads CASCADE`);
-  await db.execute(sql`TRUNCATE TABLE leads2 CASCADE`);
-  await db.execute(sql`TRUNCATE TABLE email_logs CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE leads CASCADE`);
 }
 
 async function main() {

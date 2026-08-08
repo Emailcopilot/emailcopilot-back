@@ -1,12 +1,12 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import {
-  subscriptions,
-  invoices,
-  users,
-  usage,
-  copilots,
-  emailProfiles,
+  subscriptionsTable,
+  invoicesTable,
+  usersTable,
+  usageTable,
+  copilotsTable,
+  emailProfilesTable,
 } from "../db/schema";
 import { eq, desc, and, lte, gte, ne, count } from "drizzle-orm";
 import createMollieClient, {
@@ -25,7 +25,7 @@ const mollie: MollieClient = createMollieClient({
   apiKey: process.env.MOLLIE_API_KEY!,
 });
 
-type DbUser = typeof users.$inferSelect;
+type DbUser = typeof usersTable.$inferSelect;
 
 function mapMollieStatus(
   mollieStatus: string,
@@ -48,9 +48,9 @@ export async function getSubscription(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const [sub] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId))
-    .orderBy(desc(subscriptions.createdAt))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, userId))
+    .orderBy(desc(subscriptionsTable.createdAt))
     .limit(1);
 
   if (!sub) {
@@ -63,9 +63,9 @@ export async function listInvoices(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const rows = await db
     .select()
-    .from(invoices)
-    .where(eq(invoices.userId, userId))
-    .orderBy(desc(invoices.createdAt));
+    .from(invoicesTable)
+    .where(eq(invoicesTable.userId, userId))
+    .orderBy(desc(invoicesTable.createdAt));
   res.json(rows);
 }
 
@@ -78,9 +78,9 @@ export async function subscribe(req: Request, res: Response) {
 
   const [existingSub] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, user.id))
-    .orderBy(desc(subscriptions.createdAt))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, user.id))
+    .orderBy(desc(subscriptionsTable.createdAt))
     .limit(1);
 
   // Cancel any existing Mollie subscription so plan changes don't double-charge
@@ -132,7 +132,7 @@ export async function subscribe(req: Request, res: Response) {
     if (existingSub) {
       // Keep access during plan-change checkout; apply new planId only after payment
       const [updated] = await tx
-        .update(subscriptions)
+        .update(subscriptionsTable)
         .set({
           ...(stillUsable ? {} : { planId }),
           status: stillUsable ? "active" : "pending",
@@ -141,23 +141,23 @@ export async function subscribe(req: Request, res: Response) {
           cancelAtPeriodEnd: false,
           updatedAt: new Date(),
         })
-        .where(eq(subscriptions.userId, user.id))
-        .returning({ id: subscriptions.id });
+        .where(eq(subscriptionsTable.userId, user.id))
+        .returning({ id: subscriptionsTable.id });
       subscriptionId = updated.id;
     } else {
       const [created] = await tx
-        .insert(subscriptions)
+        .insert(subscriptionsTable)
         .values({
           userId: user.id,
           planId,
           status: "pending",
           mollieCustomerId,
         })
-        .returning({ id: subscriptions.id });
+        .returning({ id: subscriptionsTable.id });
       subscriptionId = created.id;
     }
 
-    await tx.insert(invoices).values({
+    await tx.insert(invoicesTable).values({
       userId: user.id,
       subscriptionId,
       molliePaymentId: payment.id,
@@ -183,8 +183,8 @@ export async function cancelSubscription(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const [sub] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, userId))
     .limit(1);
 
   if (!sub?.mollieSubscriptionId || !sub.mollieCustomerId) {
@@ -195,25 +195,25 @@ export async function cancelSubscription(req: Request, res: Response) {
 
   // Mark cancel-at-period-end first so a racing Mollie webhook won't drop access
   await db
-    .update(subscriptions)
+    .update(subscriptionsTable)
     .set({
       cancelAtPeriodEnd: true,
       status: "active",
       updatedAt: new Date(),
     })
-    .where(eq(subscriptions.userId, userId));
+    .where(eq(subscriptionsTable.userId, userId));
 
   await mollie.customerSubscriptions.cancel(sub.mollieSubscriptionId, {
     customerId: sub.mollieCustomerId,
   });
 
   await db
-    .update(subscriptions)
+    .update(subscriptionsTable)
     .set({
       mollieSubscriptionId: null,
       updatedAt: new Date(),
     })
-    .where(eq(subscriptions.userId, userId));
+    .where(eq(subscriptionsTable.userId, userId));
 
   res.json({
     message: "Subscription canceled successfully",
@@ -225,9 +225,9 @@ export async function getLimits(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const [sub] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId))
-    .orderBy(desc(subscriptions.createdAt))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, userId))
+    .orderBy(desc(subscriptionsTable.createdAt))
     .limit(1);
 
   if (!sub || !isSubscriptionUsable(sub)) {
@@ -248,26 +248,26 @@ export async function getLimits(req: Request, res: Response) {
   const now = new Date();
   const [currentUsage] = await db
     .select()
-    .from(usage)
+    .from(usageTable)
     .where(
       and(
-        eq(usage.userId, userId),
-        eq(usage.subscriptionId, sub.id),
-        lte(usage.periodStart, now),
-        gte(usage.periodEnd, now),
+        eq(usageTable.userId, userId),
+        eq(usageTable.subscriptionId, sub.id),
+        lte(usageTable.periodStart, now),
+        gte(usageTable.periodEnd, now),
       ),
     )
     .limit(1);
 
   const [{ copilotsCount }] = await db
-    .select({ copilotsCount: count(copilots.id) })
-    .from(copilots)
-    .where(and(eq(copilots.userId, userId), ne(copilots.status, "archived")));
+    .select({ copilotsCount: count(copilotsTable.id) })
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.userId, userId), ne(copilotsTable.status, "archived")));
 
   const [{ emailProfilesCount }] = await db
-    .select({ emailProfilesCount: count(emailProfiles.id) })
-    .from(emailProfiles)
-    .where(eq(emailProfiles.userId, userId));
+    .select({ emailProfilesCount: count(emailProfilesTable.id) })
+    .from(emailProfilesTable)
+    .where(eq(emailProfilesTable.userId, userId));
 
   const emailsSent = currentUsage?.emailsSent ?? 0;
 
@@ -334,21 +334,21 @@ async function processWebhookPayment(id: string) {
     } else if (["failed", "expired", "canceled"].includes(payment.status)) {
       console.log(`❌ Payment ${payment.status}: ${id}`);
       await db
-        .update(invoices)
+        .update(invoicesTable)
         .set({ status: "failed" })
-        .where(eq(invoices.molliePaymentId, id));
+        .where(eq(invoicesTable.molliePaymentId, id));
 
       // Recurring charge failed → mark subscription past_due
       const [sub] = await db
         .select()
-        .from(subscriptions)
-        .where(eq(subscriptions.userId, userId))
+        .from(subscriptionsTable)
+        .where(eq(subscriptionsTable.userId, userId))
         .limit(1);
       if (sub?.mollieSubscriptionId) {
         await db
-          .update(subscriptions)
+          .update(subscriptionsTable)
           .set({ status: "past_due", updatedAt: new Date() })
-          .where(eq(subscriptions.userId, userId));
+          .where(eq(subscriptionsTable.userId, userId));
       }
     }
   } else if (id.startsWith("sub_")) {
@@ -380,16 +380,16 @@ async function handleSuccessfulPayment(
   await db.transaction(async (tx) => {
     const [sub] = await tx
       .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, userId))
+      .from(subscriptionsTable)
+      .where(eq(subscriptionsTable.userId, userId))
       .limit(1);
 
     if (!sub) return;
 
     const [existingInvoice] = await tx
       .select()
-      .from(invoices)
-      .where(eq(invoices.molliePaymentId, payment.id))
+      .from(invoicesTable)
+      .where(eq(invoicesTable.molliePaymentId, payment.id))
       .limit(1);
 
     // Idempotency: same payment already fully processed → no-op on Mollie retries
@@ -400,7 +400,7 @@ async function handleSuccessfulPayment(
 
     if (!existingInvoice) {
       console.log(`🔄 Recording payment for user ${userId}, plan ${plan.id}`);
-      await tx.insert(invoices).values({
+      await tx.insert(invoicesTable).values({
         userId,
         subscriptionId: sub.id,
         molliePaymentId: payment.id,
@@ -412,13 +412,13 @@ async function handleSuccessfulPayment(
     } else if (existingInvoice.status !== "paid") {
       // First payment: mark the pending invoice created during /subscribe as paid
       await tx
-        .update(invoices)
+        .update(invoicesTable)
         .set({
           status: "paid",
           paidAt: new Date(),
           subscriptionId: sub.id,
         })
-        .where(eq(invoices.molliePaymentId, payment.id));
+        .where(eq(invoicesTable.molliePaymentId, payment.id));
     }
 
     let mollieSubscriptionId = sub.mollieSubscriptionId;
@@ -471,7 +471,7 @@ async function handleSuccessfulPayment(
     }
 
     await tx
-      .update(subscriptions)
+      .update(subscriptionsTable)
       .set({
         planId: plan.id,
         status: "active",
@@ -482,7 +482,7 @@ async function handleSuccessfulPayment(
         cancelAtPeriodEnd: false,
         updatedAt: now,
       })
-      .where(eq(subscriptions.userId, userId));
+      .where(eq(subscriptionsTable.userId, userId));
 
     // Reset usage for the new period
     await ensureUsageRecord(tx, userId, sub.id, now, periodEnd);
@@ -492,8 +492,8 @@ async function handleSuccessfulPayment(
 async function handleSubscriptionWebhook(subscriptionId: string) {
   const [dbSub] = await db
     .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.mollieSubscriptionId, subscriptionId))
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.mollieSubscriptionId, subscriptionId))
     .limit(1);
 
   // Local cancel clears mollieSubscriptionId; ignore late Mollie cancel webhooks
@@ -521,9 +521,9 @@ async function handleSubscriptionWebhook(subscriptionId: string) {
     }
 
     await db
-      .update(subscriptions)
+      .update(subscriptionsTable)
       .set({ status: mapped, updatedAt: new Date() })
-      .where(eq(subscriptions.id, dbSub.id));
+      .where(eq(subscriptionsTable.id, dbSub.id));
   } catch (err) {
     console.error(
       `Failed to fetch Mollie subscription ${subscriptionId}:`,
@@ -541,12 +541,12 @@ async function ensureUsageRecord(
 ) {
   const [existing] = await tx
     .select()
-    .from(usage)
+    .from(usageTable)
     .where(
       and(
-        eq(usage.userId, userId),
-        eq(usage.subscriptionId, subscriptionId),
-        eq(usage.periodStart, periodStart),
+        eq(usageTable.userId, userId),
+        eq(usageTable.subscriptionId, subscriptionId),
+        eq(usageTable.periodStart, periodStart),
       ),
     )
     .limit(1);
@@ -554,7 +554,7 @@ async function ensureUsageRecord(
   if (existing) return existing;
 
   const [newUsage] = await tx
-    .insert(usage)
+    .insert(usageTable)
     .values({
       userId,
       subscriptionId,

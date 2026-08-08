@@ -17,7 +17,7 @@ import type {
 } from "../validators/lead.validator";
 
 export async function listLeads(
-  { status, page, limit }: ListLeadsInput,
+  { status, page, limit, copilotId }: ListLeadsInput,
   userId: number,
 ) {
   // console.log("listLeads", status, page, limit, userId);
@@ -25,6 +25,7 @@ export async function listLeads(
   const where = and(
     eq(copilots.userId, userId),
     isNotNull(copilotLeadsTable.id),
+    copilotId ? eq(copilotLeadsTable.copilotId, copilotId) : undefined,
   );
 
   const query = () =>

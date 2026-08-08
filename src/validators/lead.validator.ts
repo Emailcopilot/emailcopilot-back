@@ -1,12 +1,17 @@
 import { z } from "zod";
 
 export const patchLeadSchema = z.object({
-  status: z.enum(["new", "queued", "sent", "replied", "disqualified"]).optional(),
+  status: z
+    .enum(["new", "queued", "sent", "replied", "disqualified"])
+    .optional(),
   notes: z.string().max(5000).optional(),
 });
 
 export const listLeadsSchema = z.object({
-  status: z.enum(["new", "queued", "sent", "replied", "disqualified"]).optional(),
+  status: z
+    .enum(["new", "queued", "sent", "replied", "disqualified"])
+    .optional(),
+  copilotId: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });

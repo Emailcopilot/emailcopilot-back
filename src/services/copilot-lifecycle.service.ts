@@ -4,10 +4,11 @@ import {
   copilotLeadsTable,
   scrapeJobs,
   subscriptions,
+  usage,
 } from "../db/schema";
 import type { Copilot } from "../db/schema";
-import { and, asc, count, desc, eq, gte } from "drizzle-orm";
-import { getPlan } from "../routes/billing";
+import { and, asc, count, desc, eq, gte, lte } from "drizzle-orm";
+import { getPlan, isSubscriptionUsable } from "../lib/billing";
 
 export const monthStart = () =>
   new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -19,6 +20,7 @@ export const dayStart = () => {
 };
 
 export type SubscriptionInfo = {
+  subscriptionId: number;
   planId: string;
   maxEmailsPerMonth: number;
   totalEmailsSent: number;
@@ -61,14 +63,7 @@ export async function getActiveSubscription(
     .orderBy(desc(subscriptions.createdAt))
     .limit(1);
 
-  if (!subscription || subscription.status !== "active") {
-    return null;
-  }
-
-  if (
-    subscription.currentPeriodEnd &&
-    subscription.currentPeriodEnd < new Date()
-  ) {
+  if (!subscription || !isSubscriptionUsable(subscription)) {
     return null;
   }
 
@@ -77,21 +72,25 @@ export async function getActiveSubscription(
     return null;
   }
 
-  const [{ count: totalEmailsSent }] = await db
-    .select({ count: count() })
-    .from(copilotLeadsTable)
-    .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id))
+  const now = new Date();
+  const [currentUsage] = await db
+    .select()
+    .from(usage)
     .where(
       and(
-        eq(copilots.userId, userId),
-        eq(copilotLeadsTable.status, "sent"),
-        gte(copilotLeadsTable.sentAt, monthStart()),
+        eq(usage.userId, userId),
+        eq(usage.subscriptionId, subscription.id),
+        lte(usage.periodStart, now),
+        gte(usage.periodEnd, now),
       ),
-    );
+    )
+    .limit(1);
 
+  const totalEmailsSent = currentUsage?.emailsSent ?? 0;
   const remainingEmails = Math.max(0, plan.maxEmailsPerMonth - totalEmailsSent);
 
   return {
+    subscriptionId: subscription.id,
     planId: subscription.planId,
     maxEmailsPerMonth: plan.maxEmailsPerMonth,
     totalEmailsSent,

@@ -34,6 +34,7 @@ import runScraping from "./scraping";
 // ─── DB ───────────────────────────────────────────────────────────────────────
 import { db } from "./db/drizzle";
 import { subscriptions, users, copilots } from "./db/schema";
+import { isSubscriptionUsable } from "./lib/billing";
 import BrowserManager from "./scraping/browserManager";
 import morgan from "morgan";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -99,7 +100,7 @@ app.post("/send-now", async (req, res, next) => {
       .orderBy(desc(subscriptions.createdAt))
       .limit(1);
 
-    if (!sub || sub.status !== "active") {
+    if (!sub || !isSubscriptionUsable(sub)) {
       res.status(404).json({ error: "No active subscription found" });
       return;
     }

@@ -22,6 +22,7 @@ import {
 } from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
+import { incrementUsage } from "../lib/helpers";
 import {
   getActiveSubscription,
   getCopilotProgress,
@@ -210,6 +211,13 @@ async function sendEmail(
       .set({ emailsSent: sql`${copilots.emailsSent} + 1` })
       .where(eq(copilots.id, copilotId));
 
+    const subscription = await getActiveSubscription(template.userId);
+    if (subscription) {
+      await incrementUsage(template.userId, subscription.subscriptionId, {
+        emailsSent: 1,
+      });
+    }
+
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -368,6 +376,12 @@ async function sendCopilotLead(
       text: body,
     });
 
+    const [copilot] = await db
+      .select({ userId: copilots.userId })
+      .from(copilots)
+      .where(eq(copilots.id, copilotId))
+      .limit(1);
+
     await db.transaction(async (tx) => {
       await tx
         .update(copilotLeadsTable)
@@ -383,6 +397,15 @@ async function sendCopilotLead(
         })
         .where(eq(copilots.id, copilotId));
     });
+
+    if (copilot) {
+      const subscription = await getActiveSubscription(copilot.userId);
+      if (subscription) {
+        await incrementUsage(copilot.userId, subscription.subscriptionId, {
+          emailsSent: 1,
+        });
+      }
+    }
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
     return { success: true };

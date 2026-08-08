@@ -1,8 +1,9 @@
 import { db } from "../db/drizzle";
-import { emailProfiles } from "../db/schema";
-import { and, eq } from "drizzle-orm";
+import { emailProfiles, subscriptions } from "../db/schema";
+import { and, count, desc, eq } from "drizzle-orm";
 import { testSmtpConnection, type SendResult } from "./mailer.service";
 import { incrementUsage } from "../lib/helpers";
+import { getPlanLimits, isSubscriptionUsable } from "../lib/billing";
 import type {
   CreateEmailProfileInput,
   UpdateEmailProfileInput,
@@ -27,16 +28,56 @@ export async function getEmailProfile(id: number, userId: number) {
   return row;
 }
 
+async function getUsableSubscription(userId: number) {
+  const [sub] = await db
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.userId, userId))
+    .orderBy(desc(subscriptions.createdAt))
+    .limit(1);
+
+  if (!sub || !isSubscriptionUsable(sub)) {
+    throw Object.assign(new Error("No active subscription found"), {
+      statusCode: 403,
+    });
+  }
+  return sub;
+}
+
+async function assertEmailProfileWithinPlanLimit(
+  userId: number,
+  planId: string,
+) {
+  const limits = getPlanLimits(planId);
+  if (!limits || limits.emailProfiles === null) return;
+
+  const [{ profilesCount }] = await db
+    .select({ profilesCount: count() })
+    .from(emailProfiles)
+    .where(eq(emailProfiles.userId, userId));
+
+  if (profilesCount >= limits.emailProfiles) {
+    throw Object.assign(
+      new Error(
+        `Plan limit reached: max ${limits.emailProfiles} email profiles on ${planId}`,
+      ),
+      { statusCode: 403 },
+    );
+  }
+}
+
 export async function createEmailProfile(
   userId: number,
-  subscriptionId: number,
   data: CreateEmailProfileInput,
 ) {
+  const sub = await getUsableSubscription(userId);
+  await assertEmailProfileWithinPlanLimit(userId, sub.planId);
+
   const [created] = await db
     .insert(emailProfiles)
     .values({ ...data, userId })
     .returning();
-  await incrementUsage(userId, subscriptionId, { emailProfilesCreated: 1 });
+  await incrementUsage(userId, sub.id, { emailProfilesCreated: 1 });
   return created;
 }
 
@@ -80,7 +121,6 @@ export async function verifyEmailProfile(
       statusCode: 404,
     });
 
-  // Validate SMTP config exists before testing
   if (!profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw Object.assign(
       new Error(
@@ -90,15 +130,6 @@ export async function verifyEmailProfile(
     );
   }
 
-  console.log("Testing SMTP connection to:", {
-    host: profile.smtpHost,
-    port: profile.smtpPort ?? 587,
-    email: profile.email,
-    pass: profile.smtpPass,
-    sendName: profile.sendName ?? profile.email,
-  });
-
-  // Pass the profile's own SMTP config to the tester
   const result = await testSmtpConnection({
     host: profile.smtpHost,
     port: profile.smtpPort ?? 587,
@@ -106,8 +137,6 @@ export async function verifyEmailProfile(
     pass: profile.smtpPass,
     sendName: profile.sendName ?? profile.email,
   });
-
-  console.log("SMTP connection result:", result);
 
   if (result.success) {
     await db

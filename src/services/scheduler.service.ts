@@ -2,6 +2,7 @@ import { subscriptions, copilots } from "../db/schema";
 import { desc, eq, and } from "drizzle-orm";
 import { runCopilot } from "./copilot.service";
 import { db } from "../db/drizzle";
+import { isSubscriptionUsable } from "../lib/billing";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 interface SchedulerState {
@@ -23,7 +24,9 @@ async function getActiveSubscription(userId: number) {
     .where(eq(subscriptions.userId, userId))
     .orderBy(desc(subscriptions.createdAt));
   const sub = subs[0];
-  if (!sub) throw new Error(`No active subscription for user ${userId}`);
+  if (!sub || !isSubscriptionUsable(sub)) {
+    throw new Error(`No active subscription for user ${userId}`);
+  }
   return sub;
 }
 

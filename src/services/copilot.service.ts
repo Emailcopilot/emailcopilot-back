@@ -9,10 +9,11 @@ import {
   emailLogs,
   leads,
 } from "../db/schema";
-import { and, desc, eq, gte, count, getTableColumns } from "drizzle-orm";
+import { and, desc, eq, gte, count, getTableColumns, ne } from "drizzle-orm";
 import { sendPendingLeads } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
 import { incrementUsage } from "../lib/helpers";
+import { getPlanLimits, isSubscriptionUsable } from "../lib/billing";
 import type {
   CreateCopilotInput,
   UpdateCopilotInput,
@@ -26,11 +27,30 @@ async function getActiveSubscription(userId: number) {
     .where(eq(subscriptions.userId, userId))
     .orderBy(desc(subscriptions.createdAt));
   const sub = subs[0];
-  if (!sub)
-    throw Object.assign(new Error("No subscription found"), {
-      statusCode: 404,
+  if (!sub || !isSubscriptionUsable(sub))
+    throw Object.assign(new Error("No active subscription found"), {
+      statusCode: 403,
     });
   return sub;
+}
+
+async function assertCopilotWithinPlanLimit(userId: number, planId: string) {
+  const limits = getPlanLimits(planId);
+  if (!limits || limits.copilots === null) return;
+
+  const [{ copilotsCount }] = await db
+    .select({ copilotsCount: count() })
+    .from(copilots)
+    .where(and(eq(copilots.userId, userId), ne(copilots.status, "archived")));
+
+  if (copilotsCount >= limits.copilots) {
+    throw Object.assign(
+      new Error(
+        `Plan limit reached: max ${limits.copilots} copilots on ${planId}`,
+      ),
+      { statusCode: 403 },
+    );
+  }
 }
 
 async function validateCopilotCanActivate(copilotId: number) {
@@ -111,6 +131,7 @@ export async function getCopilot(id: number, userId: number) {
 
 export async function createCopilot(userId: number, data: CreateCopilotInput) {
   const sub = await getActiveSubscription(userId);
+  await assertCopilotWithinPlanLimit(userId, sub.planId);
 
   return await db.transaction(async (tx) => {
     let scrapeProfileId = data.scrapeProfileId ?? null;
@@ -256,6 +277,7 @@ export async function duplicateCopilot(id: number, userId: number) {
   }
 
   const sub = await getActiveSubscription(userId);
+  await assertCopilotWithinPlanLimit(userId, sub.planId);
 
   const newName =
     original.name.length > 140

@@ -45,7 +45,6 @@ emailProfilesRouter.post(
     try {
       const created = await emailProfileService.createEmailProfile(
         req.dbUser.id,
-        req.dbUser.subscriptionId,
         req.body,
       );
       res.status(201).json(created);

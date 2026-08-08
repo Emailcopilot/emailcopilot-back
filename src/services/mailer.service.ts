@@ -1,6 +1,5 @@
 import nodemailer from "nodemailer";
 import {
-  leads,
   emailTemplates,
   emailLogs,
   emailProfiles,
@@ -8,19 +7,8 @@ import {
   copilotLeadsTable,
   leads2Table,
 } from "../db/schema";
-import {
-  eq,
-  gte,
-  and,
-  count,
-  inArray,
-  sql,
-  or,
-  asc,
-  isNotNull,
-  ne,
-} from "drizzle-orm";
-import type { Lead, EmailTemplate } from "../db/types";
+import { eq, and, sql, asc, isNotNull, ne } from "drizzle-orm";
+import type { EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
 import { incrementUsage } from "../lib/helpers";
 import {
@@ -108,30 +96,6 @@ async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
 // ─── SMTP helpers ─────────────────────────────────────────────────────────────
 
 /**
- * Reads SMTP config from the emailProfiles table.
- * Retrieves the first active email profile.
- */
-async function getGlobalSmtpConfig(): Promise<SmtpConfig> {
-  const profile = await db.query.emailProfiles.findFirst({
-    where: eq(emailProfiles.status, "active"),
-  });
-
-  if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw new Error(
-      "No active email profile configured. Please set up an active SMTP email profile.",
-    );
-  }
-
-  return {
-    host: profile.smtpHost,
-    port: profile.smtpPort ?? 587,
-    email: profile.email,
-    pass: profile.smtpPass,
-    sendName: profile.sendName ?? profile.email, // Fallback to email if sendName is not set
-  };
-}
-
-/**
  * Creates a Nodemailer transporter instance configured with SMTP settings.
  *
  * @param config - SMTP configuration object containing connection details
@@ -158,7 +122,12 @@ function createTransporter(config: SmtpConfig) {
   });
 }
 
-type LeadLike = Pick<Lead, "companyName" | "email" | "website" | "phone">;
+type LeadLike = {
+  companyName: string | null;
+  email: string | null;
+  website: string | null;
+  phone: string | null;
+};
 
 function interpolate(text: string, lead: LeadLike, sendName: string): string {
   return text
@@ -172,163 +141,6 @@ function interpolate(text: string, lead: LeadLike, sendName: string): string {
 const MIN_SEND_INTERVAL_MS = 2 * 60 * 1000;
 const MAX_SEND_INTERVAL_MS = 5 * 60 * 1000;
 const IDLE_POLL_MS = 30 * 1000;
-
-// ─── Core send ────────────────────────────────────────────────────────────────
-async function sendEmail(
-  copilotId: number,
-  lead: Lead,
-  template: EmailTemplate,
-): Promise<SendResult> {
-  try {
-    const config = await getCopilotSmtpConfig(copilotId);
-    const transporter = createTransporter(config);
-    const subject = interpolate(template.subject ?? "", lead, config.sendName);
-    const body = interpolate(template.body ?? "", lead, config.sendName);
-
-    await transporter.sendMail({
-      from: `"${config.sendName}" <${config.email}>`,
-      to: lead.email as string,
-      subject,
-      text: body,
-    });
-
-    await db.insert(emailLogs).values({
-      leadId: lead.id,
-      usersId: template.userId,
-      templateId: template.id,
-      subject,
-      status: "sent",
-    });
-    await db
-      .update(leads)
-      .set({ status: "sent", emailedAt: new Date() })
-      .where(eq(leads.id, lead.id));
-
-    console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
-
-    await db
-      .update(copilots)
-      .set({ emailsSent: sql`${copilots.emailsSent} + 1` })
-      .where(eq(copilots.id, copilotId));
-
-    const subscription = await getActiveSubscription(template.userId);
-    if (subscription) {
-      await incrementUsage(template.userId, subscription.subscriptionId, {
-        emailsSent: 1,
-      });
-    }
-
-    return { success: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    await db.insert(emailLogs).values({
-      leadId: lead.id,
-      usersId: template.userId,
-      templateId: template.id,
-      subject: template.subject,
-      status: "failed",
-      errorMessage: message,
-    });
-    console.error(`❌ Failed to send to ${lead.email}: ${message}`);
-    return { success: false, error: message };
-  }
-}
-
-// ─── Send pending leads ───────────────────────────────────────────────────────
-export async function sendPendingLeads(copilotId: number): Promise<void> {
-  console.log("📧 Daily send job started...");
-
-  let template: EmailTemplate;
-  try {
-    template = await getCopilotTemplate(copilotId);
-  } catch (err) {
-    console.error("❌ No template configured for copilot.");
-    return;
-  }
-
-  let smtpConfig: SmtpConfig;
-  try {
-    smtpConfig = await getCopilotSmtpConfig(copilotId);
-  } catch (err) {
-    console.error("❌ No email profile configured for copilot.");
-    return;
-  }
-
-  const [copilot] = await db
-    .select()
-    .from(copilots)
-    .where(eq(copilots.id, copilotId));
-  const limit = copilot?.sendLimit ?? 0;
-
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-
-  const [{ sentToday }] = await db
-    .select({ sentToday: count() })
-    .from(emailLogs)
-    .where(
-      and(eq(emailLogs.status, "sent"), gte(emailLogs.sentAt, startOfDay)),
-    );
-
-  const remaining = limit - Number(sentToday);
-  if (remaining <= 0) {
-    console.log(`📭 Daily limit of ${limit} already reached.`);
-    return;
-  }
-
-  console.log(
-    `📬 Sending up to ${remaining} emails (${sentToday}/${limit} sent today)`,
-  );
-
-  const pendingLeads = await db.query.leads.findMany({
-    where: or(eq(leads.status, "new"), eq(leads.status, "queued")),
-    orderBy: leads.scrapedAt,
-    limit: remaining,
-  });
-
-  if (pendingLeads.length === 0) {
-    console.log("📭 No new leads to email.");
-    return;
-  }
-
-  const pendingIds = pendingLeads.map((l) => l.id);
-  await db
-    .update(leads)
-    .set({ status: "queued" })
-    .where(inArray(leads.id, pendingIds));
-
-  for (let i = 0; i < pendingLeads.length; i++) {
-    const lead = pendingLeads[i];
-
-    const alreadySent = await db.query.emailLogs.findFirst({
-      where: and(
-        eq(emailLogs.leadId, lead.id),
-        eq(emailLogs.status, "sent"),
-        gte(emailLogs.sentAt, startOfDay),
-      ),
-    });
-
-    if (alreadySent) {
-      console.log(`⏭️  Lead ${lead.id} already sent today — marking as "sent"`);
-      await db
-        .update(leads)
-        .set({ status: "sent" })
-        .where(eq(leads.id, lead.id));
-      continue;
-    }
-
-    if (i > 0) {
-      const delayMs = randomBetween(2 * 60 * 1000, 5 * 60 * 1000);
-      console.log(
-        `⏳ Waiting ${Math.round(delayMs / 1000)}s before next send...`,
-      );
-      await sleep(delayMs);
-    }
-    await sendEmail(copilotId, lead, template);
-  }
-
-  console.log("✅ Daily send job complete.");
-}
 
 // ─── SMTP test ────────────────────────────────────────────────────────────────
 
@@ -351,7 +163,6 @@ export async function testSmtpConnection(
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const randomBetween = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 

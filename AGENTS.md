@@ -17,8 +17,7 @@
 - **Auth**: Clerk (`@clerk/express`)
 - **ORM**: Drizzle + PostgreSQL (Neon)
 - **Payments**: Mollie
-- **Scraping**: Playwright + puppeteer-extra-plugin-stealth
-- **Scheduling**: node-cron
+- **Scraping**: Playwright + puppeteer-extra-plugin-stealth (`src/scraping/`)
 - **Validation**: Zod
 
 ## Required Env Variables
@@ -36,50 +35,39 @@ PORT=3001
 ```
 src/
 ├── index.ts         # Entry point, Express app setup
-├── routes/          # API endpoints (leads, emails, scraper, billing, copilot)
-├── services/        # Business logic (mailer, scraper, scheduler, copilot)
+├── scraping/        # Continuous scrape loop (Maps + website email crawl)
+├── routes/          # API endpoints (leads, emails, billing, copilot, scrape-*)
+├── services/        # Business logic (mailer, copilot, lifecycle, profiles)
 ├── db/              # Drizzle schema + drizzle.ts connection
-├── middleware/     # Auth (Clerk), error handler
+├── middleware/      # Auth (Clerk), error handler
 ├── validators/      # Zod schemas
 └── types/           # TypeScript augmentations
 ```
 
 ## Important Notes
 
-### Scraper (scraper.service.ts)
+### Scraping (`src/scraping/`)
 
-Key constants:
-- `RESULTS_PER_BATCH = 20` - Max leads per batch before periodic restart
-- `PERIODIC_RESTART_THRESHOLD = 15` - Force browser restart every N leads
-- `SCRAPE_TIMEOUT = 45000` - Browser navigation timeout
-- `DEFAULT_RESULTS_LIMIT = 10` - Default lead limit
+- Booted from `index.ts` via `BrowserManager` + `runScraping`
+- Picks active/running copilots via `copilot-lifecycle.service`
+- Writes to `leads2` + `copilot_leads` (not the legacy `leads` table)
+- Email sending is handled separately by `periodicSendScheduler` in mailer
 
-Flow: `runScrapeJob` → `scrapeGoogleMaps` (batches) → `processBatch` → `initPage`
-
-The scraper uses batch-based browser restarts to prevent browser crashes. Each batch:
-1. Closes previous page, creates new stealth page
-2. Navigates to fresh Google Maps search
-3. Scrolls and extracts leads with status "pending_email"
-4. Restarts after 15 leads (or when limit reached)
+Flow: `runScraping` → `resolveNextCopilot` → `listGoogleMapsListings` → insert `leads2` / `copilot_leads`
 
 ### Copilot System
 
-- Copilot orchestrates scrape + email sending
-- Schedule configured via `settings.schedule.runAt` (format: "HH:MM", 24-hour)
-- `sendLimit` from copilot controls both scrape and email limits
+- Copilot orchestrates scrape + email sending via the continuous loops above
+- Activate a copilot (`status: active`) or `POST /copilots/:id/run` to enqueue it
+- `sendLimit` from copilot controls daily scrape/email budget
 
-### Lead Status Values
+### Lead Status Values (`leads2` / `copilot_leads`)
 
 | Status | Description |
 |--------|-------------|
-| `new` | Valid lead with email extracted |
-| `queued` | Queued for email sending |
+| `new` | Lead ready to email (`copilot_leads`) |
 | `sent` | Email sent successfully |
-| `failed` | Email failed or no email found |
-| `pending_email` | Scraped but email extraction not yet done |
-| `replied` | Lead replied |
-| `disqualified` | Marked as disqualified |
-| `unsubscribed` | Unsubscribed |
+| `success` / `fail` | Scrape outcome on `leads2` |
 
 ## DB Schema Changes
 

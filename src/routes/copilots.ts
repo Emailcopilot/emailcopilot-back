@@ -6,7 +6,6 @@ import {
     updateCopilotStatusSchema,
 } from "../validators/copilot.validator";
 import * as copilotService from "../services/copilot.service";
-import { restartScheduler } from "../services/scheduler.service";
 
 export const copilotsRouter: Router = Router();
 
@@ -49,9 +48,6 @@ copilotsRouter.put(
                 req.dbUser.id,
                 req.body
             );
-            if (updated.status === "active") {
-                restartScheduler(req.dbUser.id).catch(console.error);
-            }
             res.json(updated);
         } catch (err) { next(err); }
     }
@@ -76,9 +72,6 @@ copilotsRouter.patch(
                 req.dbUser.id,
                 req.body
             );
-            if (updated.status === "active") {
-                restartScheduler(req.dbUser.id).catch(console.error);
-            }
             res.json(updated);
         } catch (err) { next(err); }
     }

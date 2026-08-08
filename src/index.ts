@@ -2,7 +2,6 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { clerkMiddleware } from "@clerk/express";
-import { eq, and, desc } from "drizzle-orm";
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 import { requireAuth } from "./middleware/auth.middleware";
@@ -11,7 +10,6 @@ import { errorHandler } from "./middleware/error.middleware";
 // ─── Routes ───────────────────────────────────────────────────────────────────
 import { leadsRouter } from "./routes/leads";
 import { emailsRouter } from "./routes/emails";
-import { scraperRouter } from "./routes/scraper";
 import { scrapeJobsRouter } from "./routes/scrape-jobs";
 import { templatesRouter } from "./routes/templates";
 import { billingRouter } from "./routes/billing";
@@ -21,20 +19,11 @@ import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
-import {
-  periodicSendScheduler,
-  sendPendingLeads,
-} from "./services/mailer.service";
-import {
-  initScheduler,
-  getSchedulerStatus,
-} from "./services/scheduler.service";
+import { periodicSendScheduler } from "./services/mailer.service";
 import runScraping from "./scraping";
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
 import { db } from "./db/drizzle";
-import { subscriptions, users, copilots } from "./db/schema";
-import { isSubscriptionUsable } from "./lib/billing";
 import BrowserManager from "./scraping/browserManager";
 import morgan from "morgan";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -79,58 +68,11 @@ app.use(requireAuth);
 
 app.use("/leads", leadsRouter);
 app.use("/emails", emailsRouter);
-app.use("/scraper", scraperRouter);
 app.use("/templates", templatesRouter);
 app.use("/copilots", copilotsRouter);
 app.use("/scrape-jobs", scrapeJobsRouter);
 app.use("/email-profiles", emailProfilesRouter);
 app.use("/scrape-profiles", scrapeProfilesRouter);
-
-// ─── Utility endpoints ────────────────────────────────────────────────────────
-
-// POST /send-now — manual trigger for the daily send job (useful for testing)
-app.post("/send-now", async (req, res, next) => {
-  try {
-    const user = req.dbUser;
-
-    const [sub] = await db
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, user.id))
-      .orderBy(desc(subscriptions.createdAt))
-      .limit(1);
-
-    if (!sub || !isSubscriptionUsable(sub)) {
-      res.status(404).json({ error: "No active subscription found" });
-      return;
-    }
-
-    const [copilot] = await db
-      .select()
-      .from(copilots)
-      .where(and(eq(copilots.userId, user.id), eq(copilots.status, "active")))
-      .orderBy(desc(copilots.updatedAt))
-      .limit(1);
-
-    if (!copilot) {
-      res.status(404).json({ error: "No active copilot found" });
-      return;
-    }
-
-    sendPendingLeads(copilot.id).catch(console.error);
-    res.json({
-      message: "Send job triggered. Check server logs for progress.",
-      copilotId: copilot.id,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /scheduler/status — shows which cron jobs are active
-app.get("/scheduler/status", (_req, res) => {
-  res.json(getSchedulerStatus());
-});
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 

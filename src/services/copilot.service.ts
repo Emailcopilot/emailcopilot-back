@@ -4,16 +4,13 @@ import {
   subscriptions,
   scrapeProfiles,
   emailProfiles,
-  emailTemplates,
   scrapeJobs,
   emailLogs,
-  leads,
 } from "../db/schema";
 import { and, desc, eq, gte, count, getTableColumns, ne } from "drizzle-orm";
-import { sendPendingLeads } from "./mailer.service";
-import { runScrapeJob } from "./scraper.service";
 import { incrementUsage } from "../lib/helpers";
 import { getPlanLimits, isSubscriptionUsable } from "../lib/billing";
+import { getCopilotNewLeadCount } from "./copilot-lifecycle.service";
 import type {
   CreateCopilotInput,
   UpdateCopilotInput,
@@ -336,89 +333,27 @@ export async function runCopilot(id: number, userId: number) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
   }
 
+  await validateCopilotCanActivate(id);
+
   console.log(
-    ` ${new Date().toLocaleTimeString()} - 🚀 Triggering copilot ${id} for user ${userId}`,
+    ` ${new Date().toLocaleTimeString()} - 🚀 Activating copilot ${id} for scraping loop (user ${userId})`,
   );
 
-  await db
+  const [updated] = await db
     .update(copilots)
     .set({
-      status: "running",
+      status: "active",
       lastRunAt: new Date(),
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
-
-  if (copilot.scrapeProfileId) {
-    const [profile] = await db
-      .select()
-      .from(scrapeProfiles)
-      .where(eq(scrapeProfiles.id, copilot.scrapeProfileId));
-    if (profile) {
-      console.log(
-        ` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id} with limit ${copilot.sendLimit}`,
-      );
-      runScrapeJob(profile, undefined, copilot.sendLimit)
-        .then((scrapeJob) => {
-          console.log(
-            ` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`,
-          );
-          db.update(copilots)
-            .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
-            .where(eq(copilots.id, id))
-            .catch(console.error);
-        })
-        .catch((err) => {
-          console.error(
-            ` ${new Date().toLocaleTimeString()} - ⚠️ Scrape job failed for copilot ${id}:`,
-            err,
-          );
-          db.update(copilots)
-            .set({
-              status: "paused",
-              lastError: "Scrape job failed: " + err.message,
-              updatedAt: new Date(),
-            })
-            .where(eq(copilots.id, id))
-            .catch(console.error);
-        })
-        .finally(() => {
-          console.log(
-            ` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`,
-          );
-          sendPendingLeads(id)
-            .then(() => {
-              console.log(
-                ` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`,
-              );
-              db.update(copilots)
-                .set({ status: "completed", updatedAt: new Date() })
-                .where(eq(copilots.id, id))
-                .catch(console.error);
-            })
-            .catch((err) => {
-              console.error(
-                ` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`,
-                err,
-              );
-              db.update(copilots)
-                .set({
-                  status: "paused",
-                  lastError: "Email job failed: " + err.message,
-                  updatedAt: new Date(),
-                })
-                .where(eq(copilots.id, id))
-                .catch(console.error);
-            });
-        });
-    }
-  }
+    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
+    .returning();
 
   return {
-    message: "Copilot triggered successfully",
+    message: "Copilot activated; scraping loop will pick it up",
     copilotId: id,
-    status: "running",
+    status: updated.status,
   };
 }
 
@@ -462,10 +397,7 @@ export async function getCopilotStatus(id: number, userId: number) {
     };
   }
 
-  const newLeadsCount = await db
-    .select({ count: count() })
-    .from(leads)
-    .where(and(eq(leads.userId, userId), eq(leads.status, "new")));
+  const newLeadsCount = await getCopilotNewLeadCount(id);
 
   return {
     id: copilot.id,
@@ -476,7 +408,7 @@ export async function getCopilotStatus(id: number, userId: number) {
     emailsSent: copilot.emailsSent,
     emailsOpened: copilot.emailsOpened,
     emailsReplied: copilot.emailsReplied,
-    newLeadsCount: Number(newLeadsCount[0]?.count ?? 0),
+    newLeadsCount,
     scrapeJob: scrapeJob
       ? {
           id: scrapeJob.id,

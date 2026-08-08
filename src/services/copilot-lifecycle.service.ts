@@ -27,7 +27,8 @@ export type SubscriptionInfo = {
 export type CopilotProgress = {
   sentTodayCount: number;
   newLeadCount: number;
-  dailySendLimit: number;
+  /** null = no daily cap; only subscription limit applies */
+  dailySendLimit: number | null;
   remainingToday: number;
   dailyLimitReached: boolean;
   scrapeNeeded: number;
@@ -111,9 +112,15 @@ export async function getCopilotProgress(
 ): Promise<CopilotProgress> {
   const sentTodayCount = await getCopilotSentTodayCount(copilot.id);
   const newLeadCount = await getCopilotNewLeadCount(copilot.id);
-  const dailySendLimit = copilot.sendLimit ?? 0;
-  const remainingToday = Math.max(0, dailySendLimit - sentTodayCount);
-  const dailyLimitReached = remainingToday <= 0;
+  const dailySendLimit = copilot.sendLimit ?? null;
+
+  // null sendLimit = no daily cap; budget is subscription remaining only
+  const remainingToday =
+    dailySendLimit == null
+      ? subscription.remainingEmails
+      : Math.max(0, dailySendLimit - sentTodayCount);
+  const dailyLimitReached =
+    dailySendLimit != null && remainingToday <= 0;
   const scrapeBudget = Math.min(subscription.remainingEmails, remainingToday);
   const scrapeNeeded = Math.max(0, scrapeBudget - newLeadCount);
 

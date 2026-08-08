@@ -257,7 +257,7 @@ async function runScrapeJob(
   );
 
   console.log(
-    `🔍 Copilot ${copilot.id}: daily limit=${progress.dailySendLimit}, remaining today=${progress.remainingToday}, scrape needed=${progress.scrapeNeeded}, batch=${maxListings}`,
+    `🔍 Copilot ${copilot.id}: daily limit=${progress.dailySendLimit ?? "none"}, remaining today=${progress.remainingToday}, scrape needed=${progress.scrapeNeeded}, batch=${maxListings}`,
   );
 
   if (maxListings <= 0) {
@@ -285,6 +285,32 @@ async function runScrapeJob(
     .innerJoin(copilotLeadsTable, eq(copilotLeadsTable.leadId, leads2Table.id))
     .where(eq(copilotLeadsTable.copilotId, copilotId));
 
+  const recordFailedLead = async (listing: {
+    name?: string | null;
+    phone?: string | null;
+    addressSnippet?: string | null;
+    placeId?: string | null;
+  }) => {
+    if (!listing.placeId) {
+      return;
+    }
+
+    // place_id is globally unique — ignore if another scrape already stored it
+    await db
+      .insert(leads2Table)
+      .values({
+        companyName: listing.name || "",
+        email: "",
+        website: "",
+        phone: listing.phone || "",
+        address: listing.addressSnippet || "",
+        sourceQuery: searchQuery,
+        placeId: listing.placeId,
+        status: "fail",
+      })
+      .onConflictDoNothing({ target: leads2Table.placeId });
+  };
+
   let listings;
   try {
     listings = await listGoogleMapsListings({
@@ -297,6 +323,9 @@ async function runScrapeJob(
         if (!card.placeId) {
           return false;
         }
+        if (existingLeads.find((l) => l.placeId == card.placeId)) {
+          return false;
+        }
         const failedLeads = await db.$count(
           leads2Table,
           and(
@@ -304,44 +333,27 @@ async function runScrapeJob(
             eq(leads2Table.placeId, card.placeId),
           ),
         );
-        if (failedLeads > 0) {
-          return false;
-        }
-        return !existingLeads.find((l) => l.placeId == card.placeId);
+        return failedLeads === 0;
       },
       cardFeedFilter: async (listing) => {
         const continueFilter = !!listing.website;
         if (!continueFilter) {
-          await db.insert(leads2Table).values({
-            companyName: listing.name || "",
-            email: "",
-            website: "",
-            phone: listing.phone || "",
-            address: listing.addressSnippet || "",
-            sourceQuery: searchQuery,
-            placeId: listing.placeId || "",
-            status: "fail",
-          });
+          await recordFailedLead(listing);
         }
         return continueFilter;
       },
       websiteFilter: async (listing) => {
         const continueFilter = !!listing.email;
         if (!continueFilter) {
-          await db.insert(leads2Table).values({
-            companyName: listing.name || "",
-            email: "",
-            website: "",
-            phone: listing.phone || "",
-            address: listing.addressSnippet || "",
-            sourceQuery: searchQuery,
-            placeId: listing.placeId || "",
-            status: "fail",
-          });
+          await recordFailedLead(listing);
         }
         return continueFilter;
       },
       onListing: async (listing) => {
+        if (!listing.placeId) {
+          return;
+        }
+
         await db.transaction(async (tx) => {
           const [lead] = await tx
             .insert(leads2Table)
@@ -352,10 +364,34 @@ async function runScrapeJob(
               phone: listing.phone || "",
               address: listing.addressSnippet || "",
               sourceQuery: searchQuery,
-              placeId: listing.placeId || "",
+              placeId: listing.placeId,
               status: "success",
             })
+            .onConflictDoUpdate({
+              target: leads2Table.placeId,
+              set: {
+                companyName: listing.name || "",
+                email: listing.email || "",
+                website: listing.website || "",
+                phone: listing.phone || "",
+                address: listing.addressSnippet || "",
+                sourceQuery: searchQuery,
+                status: "success",
+                updatedAt: new Date(),
+              },
+            })
             .returning();
+
+          const alreadyLinked = await tx.$count(
+            copilotLeadsTable,
+            and(
+              eq(copilotLeadsTable.copilotId, copilotId),
+              eq(copilotLeadsTable.leadId, lead.id),
+            ),
+          );
+          if (alreadyLinked > 0) {
+            return;
+          }
 
           await tx.insert(copilotLeadsTable).values({
             copilotId,

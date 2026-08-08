@@ -1,7 +1,6 @@
 import nodemailer from "nodemailer";
 import {
   emailTemplates,
-  emailLogs,
   emailProfiles,
   copilots,
   copilotLeadsTable,

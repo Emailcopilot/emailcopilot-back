@@ -25,6 +25,13 @@ export const createCopilotSchema = z.object({
     })
     .optional(),
   templateId: z.number().int().positive().optional(),
+  template: z
+    .object({
+      name: z.string().min(1).max(255),
+      subject: z.string().min(1).max(998),
+      body: z.string().min(1),
+    })
+    .optional(),
   scrapeProfileId: z.number().int().positive().optional(),
   scrapeProfile: z
     .object({

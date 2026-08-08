@@ -5,6 +5,7 @@ import {
   subscriptions,
   scrapeProfiles,
   emailProfiles,
+  emailTemplates,
   scrapeJobs,
   emailLogs,
 } from "../db/schema";
@@ -106,10 +107,12 @@ export async function listCopilots(req: Request, res: Response) {
       ...getTableColumns(copilots),
       scrapeProfile: getTableColumns(scrapeProfiles),
       emailProfile: getTableColumns(emailProfiles),
+      template: getTableColumns(emailTemplates),
     })
     .from(copilots)
     .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
     .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
+    .leftJoin(emailTemplates, eq(copilots.templateId, emailTemplates.id))
     .orderBy(desc(copilots.createdAt))
     .where(eq(copilots.userId, userId));
 
@@ -125,10 +128,12 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
       ...getTableColumns(copilots),
       scrapeProfile: getTableColumns(scrapeProfiles),
       emailProfile: getTableColumns(emailProfiles),
+      template: getTableColumns(emailTemplates),
     })
     .from(copilots)
     .leftJoin(scrapeProfiles, eq(copilots.scrapeProfileId, scrapeProfiles.id))
     .leftJoin(emailProfiles, eq(copilots.emailProfileId, emailProfiles.id))
+    .leftJoin(emailTemplates, eq(copilots.templateId, emailTemplates.id))
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
 
   if (!row)
@@ -153,6 +158,10 @@ export async function createCopilot(req: Request, res: Response) {
     const emailProfile = data.emailProfile ?? null;
     let emailProfileData = null;
 
+    let templateId = data.templateId ?? null;
+    const template = data.template ?? null;
+    let templateData = null;
+
     if (!scrapeProfileId && scrapeProfile) {
       const [profile] = await tx
         .insert(scrapeProfiles)
@@ -171,9 +180,18 @@ export async function createCopilot(req: Request, res: Response) {
       emailProfileData = profile;
     }
 
+    if (!templateId && template) {
+      const [createdTemplate] = await tx
+        .insert(emailTemplates)
+        .values({ ...template, userId })
+        .returning();
+      templateId = createdTemplate.id;
+      templateData = createdTemplate;
+    }
+
     const [row] = await tx
       .insert(copilots)
-      .values({ ...data, userId, scrapeProfileId, emailProfileId })
+      .values({ ...data, userId, scrapeProfileId, emailProfileId, templateId })
       .returning();
 
     await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
@@ -196,10 +214,20 @@ export async function createCopilot(req: Request, res: Response) {
       emailProfileData = profile;
     }
 
+    if (templateId && !templateData) {
+      const [createdTemplate] = await tx
+        .select()
+        .from(emailTemplates)
+        .where(eq(emailTemplates.id, templateId));
+
+      templateData = createdTemplate;
+    }
+
     return {
       ...row,
       scrapeProfile: scrapeProfileData,
       emailProfile: emailProfileData,
+      template: templateData,
     };
   });
 
@@ -220,9 +248,13 @@ export async function updateCopilot(
   let emailProfileId = data.emailProfileId ?? null;
   const emailProfile = data.emailProfile ?? null;
 
+  let templateId = data.templateId ?? null;
+  const template = data.template ?? null;
+
   const updated = await db.transaction(async (tx) => {
     let emailProfileData = null;
     let scrapeProfileData = null;
+    let templateData = null;
     if (!scrapeProfileId && scrapeProfile) {
       const [profile] = await tx
         .insert(scrapeProfiles)
@@ -241,9 +273,24 @@ export async function updateCopilot(
       emailProfileData = profile;
     }
 
+    if (!templateId && template) {
+      const [createdTemplate] = await tx
+        .insert(emailTemplates)
+        .values({ ...template, userId })
+        .returning();
+      templateId = createdTemplate.id;
+      templateData = createdTemplate;
+    }
+
     const [row] = await tx
       .update(copilots)
-      .set({ ...data, scrapeProfileId, emailProfileId, updatedAt: new Date() })
+      .set({
+        ...data,
+        scrapeProfileId,
+        emailProfileId,
+        templateId,
+        updatedAt: new Date(),
+      })
       .where(and(eq(copilots.id, id), eq(copilots.userId, userId)))
       .returning();
 
@@ -268,10 +315,20 @@ export async function updateCopilot(
       emailProfileData = profile;
     }
 
+    if (templateId && !templateData) {
+      const [createdTemplate] = await tx
+        .select()
+        .from(emailTemplates)
+        .where(eq(emailTemplates.id, templateId));
+
+      templateData = createdTemplate;
+    }
+
     return {
       ...row,
       scrapeProfile: scrapeProfileData,
       emailProfile: emailProfileData,
+      template: templateData,
     };
   });
 

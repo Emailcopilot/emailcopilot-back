@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { emailProviderEnum } from "../db/schema";
 
 export const createEmailProfileSchema = z.object({
   profileName: z.string().min(1).max(100),

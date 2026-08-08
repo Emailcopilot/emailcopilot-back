@@ -17,8 +17,18 @@ export function validate(schema: ZodSchema, target: Target = "body") {
       res.status(400).json({ error: "Validation failed", details: errors });
       return;
     }
-    // Replace with coerced/defaulted values
-    (req as any)[target] = result.data;
+    // Replace with coerced/defaulted values.
+    // Express 5 makes req.query a read-only getter, so redefine the property.
+    if (target === "query") {
+      Object.defineProperty(req, "query", {
+        value: result.data,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+    } else {
+      (req as any)[target] = result.data;
+    }
     next();
   };
 }

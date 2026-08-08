@@ -1,27 +1,18 @@
+import type { Request, Response } from "express";
 import { copilotLeadsTable, copilots, leads2Table } from "./../db/schema";
 import { db } from "../db/drizzle";
-import { leads, emailLogs } from "../db/schema";
-import {
-  eq,
-  desc,
-  count,
-  sql,
-  and,
-  getTableColumns,
-  isNotNull,
-} from "drizzle-orm";
-import type { LeadStatus } from "../db/types";
+import { leads } from "../db/schema";
+import { eq, desc, count, and, getTableColumns, isNotNull } from "drizzle-orm";
 import type {
   PatchLeadInput,
   ListLeadsInput,
 } from "../validators/lead.validator";
 
-export async function listLeads(
-  { status, page, limit, copilotId }: ListLeadsInput,
-  userId: number,
-) {
-  // console.log("listLeads", status, page, limit, userId);
+export async function listLeads(req: Request, res: Response) {
+  const { page, limit, copilotId } = req.query as unknown as ListLeadsInput;
+  const userId = req.dbUser!.id;
   const offset = (page - 1) * limit;
+
   const where = and(
     eq(copilots.userId, userId),
     isNotNull(copilotLeadsTable.id),
@@ -48,13 +39,13 @@ export async function listLeads(
     db.$count(query()),
   ]);
 
-  return {
+  res.json({
     data: rows,
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-  };
+  });
 }
 
-export async function getLeadStats() {
+export async function getLeadStats(_req: Request, res: Response) {
   const rows = await db
     .select({ status: leads.status, count: count() })
     .from(leads)
@@ -73,25 +64,30 @@ export async function getLeadStats() {
     summary[row.status as SummaryKey] = Number(row.count);
     summary.total += Number(row.count);
   }
-  return summary;
+  res.json(summary);
 }
 
-export async function getLead(id: number) {
+export async function getLead(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
   const [lead] = await db
     .select({
       ...getTableColumns(leads2Table),
     })
     .from(leads2Table)
-    .where(and(eq(leads2Table.id, id)))
+    .where(and(eq(leads2Table.id, id), eq(copilots.userId, userId)))
     .leftJoin(copilotLeadsTable, eq(leads2Table.id, copilotLeadsTable.leadId))
     .leftJoin(copilots, eq(copilotLeadsTable.copilotId, copilots.id));
 
   if (!lead)
     throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
-  return lead;
+  res.json(lead);
 }
 
-export async function patchLead(id: number, data: PatchLeadInput) {
+export async function patchLead(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
+  const data = req.body as PatchLeadInput;
   const updateData: Record<string, unknown> = {};
   if (data.status) updateData.status = data.status;
   if (data.notes !== undefined) updateData.notes = data.notes;
@@ -104,9 +100,11 @@ export async function patchLead(id: number, data: PatchLeadInput) {
     .returning();
   if (!lead)
     throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
-  return lead;
+  res.json(lead);
 }
 
-export async function deleteLead(id: number) {
+export async function deleteLead(req: Request<{ id: string }>, res: Response) {
+  const id = Number(req.params.id);
   await db.delete(leads).where(eq(leads.id, id));
+  res.json({ success: true });
 }

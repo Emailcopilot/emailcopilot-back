@@ -1,0 +1,1 @@
+ALTER TABLE "copilots" ADD COLUMN "send_limit_active" boolean DEFAULT false NOT NULL;

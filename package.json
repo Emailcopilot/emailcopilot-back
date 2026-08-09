@@ -22,6 +22,7 @@
     "@mollie/api-client": "^4.5.0",
     "@neondatabase/serverless": "^1.0.2",
     "cors": "^2.8.5",
+    "countries-and-timezones": "^3.10.0",
     "dotenv": "^16.4.1",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",

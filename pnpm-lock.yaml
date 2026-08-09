@@ -20,6 +20,9 @@ importers:
       cors:
         specifier: ^2.8.5
         version: 2.8.6
+      countries-and-timezones:
+        specifier: ^3.10.0
+        version: 3.10.0
       dotenv:
         specifier: ^16.4.1
         version: 16.6.1
@@ -811,6 +814,10 @@ packages:
   cors@2.8.6:
     resolution: {integrity: sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==}
     engines: {node: '>= 0.10'}
+
+  countries-and-timezones@3.10.0:
+    resolution: {integrity: sha512-HQ1GtXWNZy0r5MnZMLF9xmBmFNmtDVBeKQgX/5DY+RVmcZTODA+EPN/JLPCYRNP86nHG0QQrb1yJwGzXeqCCXw==}
+    engines: {node: '>=8.x', npm: '>=5.x'}
 
   create-require@1.1.1:
     resolution: {integrity: sha512-dcKFX3jn0MpIaXjisoRvexIJVEKzaq7z2rZKxf+MSr9TkdmHmsU4m2lcLojrj/FHl8mk5VxMmYA+ftRkP/3oKQ==}
@@ -2203,6 +2210,8 @@ snapshots:
     dependencies:
       object-assign: 4.1.1
       vary: 1.1.2
+
+  countries-and-timezones@3.10.0: {}
 
   create-require@1.1.1: {}
 

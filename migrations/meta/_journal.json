@@ -36,6 +36,20 @@
       "when": 1786206000000,
       "tag": "0004_rename_leads2_to_leads",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786276966233,
+      "tag": "0005_great_spencer_smythe",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786277111219,
+      "tag": "0006_watery_flatman",
+      "breakpoints": true
     }
   ]
 }

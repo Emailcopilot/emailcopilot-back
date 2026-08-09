@@ -382,10 +382,15 @@ export async function duplicateCopilot(
       name: newName,
       description: original.description,
       status: "draft",
+      sendLimit: original.sendLimit,
+      sendLimitActive: original.sendLimitActive,
+      activeDays: original.activeDays,
+      sendingHours: original.sendingHours,
+      sendingHoursActive: original.sendingHoursActive,
+      timezone: original.timezone,
       emailProfileId: original.emailProfileId,
       scrapeProfileId: original.scrapeProfileId,
       templateId: original.templateId,
-      settings: original.settings,
       emailsSent: 0,
       emailsOpened: 0,
       emailsReplied: 0,
@@ -483,7 +488,7 @@ export async function getCopilotStatus(
 
   const [newLeadsCount, sentToday] = await Promise.all([
     getCopilotNewLeadCount(id),
-    getCopilotSentTodayCount(id),
+    getCopilotSentTodayCount(id, copilot.timezone),
   ]);
 
   const emailStats = { sentToday };

@@ -19,6 +19,7 @@ import {
   setCopilotActive,
   syncCopilotsDailyStatus,
 } from "./copilot-lifecycle.service";
+import { OUTSIDE_SEND_WINDOW_MSG } from "../lib/send-window";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface SmtpConfig {
@@ -270,8 +271,16 @@ async function periodicSend(): Promise<boolean> {
 
     const progress = await getCopilotProgress(copilot, subscription);
 
+    if (!progress.withinSendWindow) {
+      await setCopilotActive(copilot.id, OUTSIDE_SEND_WINDOW_MSG);
+      continue;
+    }
+
     if (progress.dailyLimitReached) {
-      await setCopilotActive(copilot.id);
+      await setCopilotActive(
+        copilot.id,
+        "Daily send limit reached — will resume when quota resets",
+      );
       continue;
     }
 
@@ -328,8 +337,13 @@ async function periodicSend(): Promise<boolean> {
     );
 
     const afterSend = await getCopilotProgress(copilot, subscription);
-    if (afterSend.dailyLimitReached) {
-      await setCopilotActive(copilot.id);
+    if (!afterSend.withinSendWindow) {
+      await setCopilotActive(copilot.id, OUTSIDE_SEND_WINDOW_MSG);
+    } else if (afterSend.dailyLimitReached) {
+      await setCopilotActive(
+        copilot.id,
+        "Daily send limit reached — will resume when quota resets",
+      );
     }
 
     return true;

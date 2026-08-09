@@ -7,14 +7,13 @@ import {
   usageTable,
 } from "../db/schema";
 import type { Copilot } from "../db/schema";
-import { and, asc, count, desc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, lte, lt } from "drizzle-orm";
 import { getPlan, isSubscriptionUsable } from "../lib/billing";
-
-const dayStart = () => {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  return start;
-};
+import {
+  getCopilotDayBounds,
+  isWithinSendWindow,
+  OUTSIDE_SEND_WINDOW_MSG,
+} from "../lib/send-window";
 
 export type SubscriptionInfo = {
   subscriptionId: number;
@@ -31,12 +30,16 @@ export type CopilotProgress = {
   dailySendLimit: number | null;
   remainingToday: number;
   dailyLimitReached: boolean;
+  withinSendWindow: boolean;
   scrapeNeeded: number;
 };
 
 export async function getCopilotSentTodayCount(
   copilotId: number,
+  timezone: string,
 ): Promise<number> {
+  const { start, end } = getCopilotDayBounds(timezone);
+
   const [{ count: sentToday }] = await db
     .select({ count: count() })
     .from(copilotLeadsTable)
@@ -44,7 +47,8 @@ export async function getCopilotSentTodayCount(
       and(
         eq(copilotLeadsTable.copilotId, copilotId),
         eq(copilotLeadsTable.status, "sent"),
-        gte(copilotLeadsTable.sentAt, dayStart()),
+        gte(copilotLeadsTable.sentAt, start),
+        lt(copilotLeadsTable.sentAt, end),
       ),
     );
 
@@ -112,19 +116,28 @@ export async function getCopilotProgress(
   copilot: Copilot,
   subscription: SubscriptionInfo,
 ): Promise<CopilotProgress> {
-  const sentTodayCount = await getCopilotSentTodayCount(copilot.id);
+  const sentTodayCount = await getCopilotSentTodayCount(
+    copilot.id,
+    copilot.timezone,
+  );
   const newLeadCount = await getCopilotNewLeadCount(copilot.id);
-  const dailySendLimit = copilot.sendLimit ?? null;
+  // Daily cap only when toggle is on and a positive limit is set
+  const dailySendLimit =
+    copilot.sendLimitActive && copilot.sendLimit != null
+      ? copilot.sendLimit
+      : null;
+  const withinSendWindow = isWithinSendWindow(copilot);
 
-  // null sendLimit = no daily cap; budget is subscription remaining only
+  // null dailySendLimit = no daily cap; budget is subscription remaining only
   const remainingToday =
     dailySendLimit == null
       ? subscription.remainingEmails
       : Math.max(0, dailySendLimit - sentTodayCount);
-  const dailyLimitReached =
-    dailySendLimit != null && remainingToday <= 0;
+  const dailyLimitReached = dailySendLimit != null && remainingToday <= 0;
   const scrapeBudget = Math.min(subscription.remainingEmails, remainingToday);
-  const scrapeNeeded = Math.max(0, scrapeBudget - newLeadCount);
+  const scrapeNeeded = withinSendWindow
+    ? Math.max(0, scrapeBudget - newLeadCount)
+    : 0;
 
   return {
     sentTodayCount,
@@ -132,6 +145,7 @@ export async function getCopilotProgress(
     dailySendLimit,
     remainingToday,
     dailyLimitReached,
+    withinSendWindow,
     scrapeNeeded,
   };
 }
@@ -164,7 +178,26 @@ async function setCopilotRunning(copilotId: number): Promise<Copilot> {
   return running;
 }
 
-/** Demote running copilots at daily limit → active; promote active with quota → running. */
+function canRunCopilot(
+  subscription: SubscriptionInfo,
+  progress: CopilotProgress,
+): boolean {
+  return (
+    subscription.remainingEmails > 0 &&
+    !progress.dailyLimitReached &&
+    progress.remainingToday > 0 &&
+    progress.withinSendWindow
+  );
+}
+
+function inactiveReason(progress: CopilotProgress): string {
+  if (!progress.withinSendWindow) {
+    return OUTSIDE_SEND_WINDOW_MSG;
+  }
+  return DAILY_LIMIT_MSG;
+}
+
+/** Demote running copilots that cannot work; promote active with quota + window → running. */
 export async function syncCopilotsDailyStatus(): Promise<Copilot | null> {
   const runningCopilots = await getRunningCopilots();
 
@@ -176,8 +209,8 @@ export async function syncCopilotsDailyStatus(): Promise<Copilot | null> {
 
     const progress = await getCopilotProgress(copilot, subscription);
 
-    if (progress.dailyLimitReached) {
-      await setCopilotActive(copilot.id, DAILY_LIMIT_MSG);
+    if (!canRunCopilot(subscription, progress)) {
+      await setCopilotActive(copilot.id, inactiveReason(progress));
     }
   }
 
@@ -189,13 +222,13 @@ export async function syncCopilotsDailyStatus(): Promise<Copilot | null> {
 
   for (const copilot of activeCopilots) {
     const subscription = await getActiveSubscription(copilot.userId);
-    if (!subscription || subscription.remainingEmails <= 0) {
+    if (!subscription) {
       continue;
     }
 
     const progress = await getCopilotProgress(copilot, subscription);
 
-    if (!progress.dailyLimitReached && progress.remainingToday > 0) {
+    if (canRunCopilot(subscription, progress)) {
       return setCopilotRunning(copilot.id);
     }
   }
@@ -204,13 +237,13 @@ export async function syncCopilotsDailyStatus(): Promise<Copilot | null> {
 
   for (const copilot of stillRunning) {
     const subscription = await getActiveSubscription(copilot.userId);
-    if (!subscription || subscription.remainingEmails <= 0) {
+    if (!subscription) {
       continue;
     }
 
     const progress = await getCopilotProgress(copilot, subscription);
 
-    if (!progress.dailyLimitReached) {
+    if (canRunCopilot(subscription, progress)) {
       return copilot;
     }
   }
@@ -273,7 +306,7 @@ async function resolveCopilotWithPendingScrapeJob(): Promise<Copilot | null> {
   }
 
   const progress = await getCopilotProgress(copilot, subscription);
-  if (progress.dailyLimitReached) {
+  if (!canRunCopilot(subscription, progress)) {
     return null;
   }
 

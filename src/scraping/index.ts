@@ -20,6 +20,7 @@ import {
   completeCopilot,
 } from "../services/copilot-lifecycle.service";
 import type { CopilotProgress } from "../services/copilot-lifecycle.service";
+import { OUTSIDE_SEND_WINDOW_MSG } from "../lib/send-window";
 
 const MAX_SCRAPE_FAILURES = 3;
 const scrapeFailureCounts = new Map<number, number>();
@@ -134,6 +135,11 @@ async function handleCopilotWorkStatus(
   copilot: Copilot,
   progress: CopilotProgress,
 ): Promise<boolean> {
+  if (!progress.withinSendWindow) {
+    await setCopilotActive(copilot.id, OUTSIDE_SEND_WINDOW_MSG);
+    return true;
+  }
+
   if (progress.dailyLimitReached) {
     await setCopilotActive(
       copilot.id,
@@ -248,7 +254,9 @@ async function runScrapeJob(
     await stopScrapeJob({
       scrapeJobId: runningJob.id,
       status: "done",
-      errorMessage: "Daily send limit reached",
+      errorMessage: !progress.withinSendWindow
+        ? OUTSIDE_SEND_WINDOW_MSG
+        : "Daily send limit reached",
     });
     return;
   }
@@ -270,7 +278,9 @@ async function runScrapeJob(
       errorMessage: "No listings needed",
     });
 
-    if (progress.dailyLimitReached) {
+    if (!progress.withinSendWindow) {
+      await setCopilotActive(copilot.id, OUTSIDE_SEND_WINDOW_MSG);
+    } else if (progress.dailyLimitReached) {
       await setCopilotActive(
         copilot.id,
         "Daily send limit reached — will resume when quota resets",
@@ -293,6 +303,8 @@ async function runScrapeJob(
     phone?: string | null;
     addressSnippet?: string | null;
     placeId?: string | null;
+    website?: string | null;
+    email?: string | null;
   }) => {
     if (!listing.placeId) {
       return;
@@ -303,8 +315,8 @@ async function runScrapeJob(
       .insert(leadsTable)
       .values({
         companyName: listing.name || "",
-        email: "",
-        website: "",
+        email: listing.email || null,
+        website: listing.website || null,
         phone: listing.phone || "",
         address: listing.addressSnippet || "",
         sourceQuery: searchQuery,

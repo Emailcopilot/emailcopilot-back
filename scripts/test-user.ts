@@ -258,10 +258,14 @@ async function ensureTestUser(config: TestUserConfig) {
         description: `Seeded copilot for ${config.email}`,
         status: "running",
         sendLimit: 10,
+        sendLimitActive: true,
+        activeDays: [1, 2, 3, 4, 5],
+        sendingHours: { start: "09:00", end: "17:00" },
+        sendingHoursActive: false,
+        timezone: config.timezone,
         emailProfileId: emailProfile!.id,
         scrapeProfileId: scrapeProfile!.id,
         templateId: template!.id,
-        settings: { schedule: { runAt: "09:00" } },
       })
       .returning();
     console.log("✅ Created copilot", copilot.id);
@@ -273,7 +277,7 @@ async function ensureTestUser(config: TestUserConfig) {
         scrapeProfileId: scrapeProfile!.id,
         templateId: template!.id,
         status: "active",
-        settings: { schedule: { runAt: "09:00" } },
+        timezone: config.timezone,
         updatedAt: new Date(),
       })
       .where(eq(copilotsTable.id, copilot.id))

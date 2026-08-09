@@ -216,7 +216,17 @@ export const copilotsTable = pgTable("copilots", {
   name: varchar("name", { length: 150 }).notNull(),
   description: text("description"),
   sendLimit: integer("send_limit"),
-  // sendLimitActive: boolean().notNull().default(false),
+  sendLimitActive: boolean("send_limit_active").notNull().default(false),
+  activeDays: jsonb("active_days")
+    .$type<number[]>()
+    .notNull()
+    .default([1, 2, 3, 4, 5]),
+  sendingHours: jsonb("sending_hours")
+    .$type<{ start: string; end: string }>()
+    .notNull()
+    .default({ start: "09:00", end: "17:00" }),
+  sendingHoursActive: boolean("sending_hours_active").notNull().default(false),
+  timezone: varchar("timezone", { length: 100 }).notNull().default("UTC"),
   status: copilotStatusEnum("status").notNull().default("draft"),
   emailProfileId: integer("email_profile_id").references(
     () => emailProfilesTable.id,
@@ -233,10 +243,6 @@ export const copilotsTable = pgTable("copilots", {
   templateId: integer("template_id").references(() => emailTemplatesTable.id, {
     onDelete: "set null",
   }),
-  settings: jsonb("settings")
-    .$type<Record<string, unknown>>()
-    .notNull()
-    .default({}),
   emailsSent: integer("emails_sent").notNull().default(0),
   emailsOpened: integer("emails_opened").notNull().default(0),
   emailsReplied: integer("emails_replied").notNull().default(0),

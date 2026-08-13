@@ -1,5 +1,10 @@
 import type { Request, Response } from "express";
-import { copilotLeadsTable, copilotsTable, leadsTable } from "../db/schema";
+import {
+  copilotLeadsTable,
+  copilotsTable,
+  emailTemplatesTable,
+  leadsTable,
+} from "../db/schema";
 import { db } from "../db/drizzle";
 import { eq, desc, and, getTableColumns, isNotNull } from "drizzle-orm";
 import type { ListLeadsInput } from "../validators/lead.validator";
@@ -19,12 +24,20 @@ export async function listLeads(req: Request, res: Response) {
     db
       .select({
         ...getTableColumns(leadsTable),
+        templateId: copilotsTable.templateId,
         sentAt: copilotLeadsTable.sentAt,
         status: copilotLeadsTable.status,
       })
       .from(copilotLeadsTable)
-      .leftJoin(copilotsTable, eq(copilotLeadsTable.copilotId, copilotsTable.id))
+      .leftJoin(
+        copilotsTable,
+        eq(copilotLeadsTable.copilotId, copilotsTable.id),
+      )
       .leftJoin(leadsTable, eq(copilotLeadsTable.leadId, leadsTable.id))
+      .leftJoin(
+        emailTemplatesTable,
+        eq(copilotsTable.templateId, emailTemplatesTable.id),
+      )
       .where(where);
 
   const [rows, total] = await Promise.all([

@@ -25,6 +25,7 @@ export async function listLeads(req: Request, res: Response) {
       .select({
         ...getTableColumns(leadsTable),
         templateId: copilotsTable.templateId,
+        copilotName: copilotsTable.name,
         sentAt: copilotLeadsTable.sentAt,
         status: copilotLeadsTable.status,
       })

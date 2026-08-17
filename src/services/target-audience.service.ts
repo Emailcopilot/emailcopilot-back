@@ -1,22 +1,22 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
-import { scrapeProfilesTable } from "../db/schema";
+import { targetAudienceTable } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import type {
-  CreateScrapeProfileInput,
-  UpdateScrapeProfileInput,
-} from "../validators/scrape-profile.validator";
+  CreateTargetAudienceInput,
+  UpdateTargetAudienceInput,
+} from "../validators/target-audience.validator";
 
-export async function listScrapeProfiles(req: Request, res: Response) {
+export async function listTargetAudiences(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const rows = await db
     .select()
-    .from(scrapeProfilesTable)
-    .where(eq(scrapeProfilesTable.userId, userId));
+    .from(targetAudienceTable)
+    .where(eq(targetAudienceTable.userId, userId));
   res.json(rows);
 }
 
-export async function getScrapeProfile(
+export async function getTargetAudience(
   req: Request<{ id: string }>,
   res: Response,
 ) {
@@ -25,49 +25,49 @@ export async function getScrapeProfile(
 
   const [row] = await db
     .select()
-    .from(scrapeProfilesTable)
-    .where(and(eq(scrapeProfilesTable.id, id), eq(scrapeProfilesTable.userId, userId)));
+    .from(targetAudienceTable)
+    .where(and(eq(targetAudienceTable.id, id), eq(targetAudienceTable.userId, userId)));
   if (!row)
     throw Object.assign(
-      new Error("Scrape profile not found getScrapeProfile"),
+      new Error("Target audience not found getTargetAudience"),
       { statusCode: 404 },
     );
   res.json(row);
 }
 
-export async function createScrapeProfile(req: Request, res: Response) {
+export async function createTargetAudience(req: Request, res: Response) {
   const userId = req.dbUser!.id;
-  const data = req.body as CreateScrapeProfileInput;
+  const data = req.body as CreateTargetAudienceInput;
 
   const [created] = await db
-    .insert(scrapeProfilesTable)
+    .insert(targetAudienceTable)
     .values({ ...data, userId })
     .returning();
   res.status(201).json(created);
 }
 
-export async function updateScrapeProfile(
+export async function updateTargetAudience(
   req: Request<{ id: string }>,
   res: Response,
 ) {
   const id = Number(req.params.id);
   const userId = req.dbUser!.id;
-  const data = req.body as UpdateScrapeProfileInput;
+  const data = req.body as UpdateTargetAudienceInput;
 
   const [updated] = await db
-    .update(scrapeProfilesTable)
+    .update(targetAudienceTable)
     .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(scrapeProfilesTable.id, id), eq(scrapeProfilesTable.userId, userId)))
+    .where(and(eq(targetAudienceTable.id, id), eq(targetAudienceTable.userId, userId)))
     .returning();
   if (!updated)
     throw Object.assign(
-      new Error("Scrape profile not found updateScrapeProfile"),
+      new Error("Target audience not found updateTargetAudience"),
       { statusCode: 404 },
     );
   res.json(updated);
 }
 
-export async function deleteScrapeProfile(
+export async function deleteTargetAudience(
   req: Request<{ id: string }>,
   res: Response,
 ) {
@@ -75,7 +75,7 @@ export async function deleteScrapeProfile(
   const userId = req.dbUser!.id;
 
   await db
-    .delete(scrapeProfilesTable)
-    .where(and(eq(scrapeProfilesTable.id, id), eq(scrapeProfilesTable.userId, userId)));
+    .delete(targetAudienceTable)
+    .where(and(eq(targetAudienceTable.id, id), eq(targetAudienceTable.userId, userId)));
   res.status(204).send();
 }

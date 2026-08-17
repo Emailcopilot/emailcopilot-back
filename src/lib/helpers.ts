@@ -5,7 +5,7 @@ import { eq, and, lte, gte, sql } from "drizzle-orm";
 export async function incrementUsage(
     userId: number,
     subscriptionId: number,
-    increments: { emailsSent?: number; copilotsCreated?: number; emailProfilesCreated?: number }
+    increments: { emailsSent?: number; copilotsCreated?: number; emailAccountsCreated?: number }
 ) {
     const now = new Date();
 
@@ -14,7 +14,7 @@ export async function incrementUsage(
         .set({
             emailsSent: sql`${usageTable.emailsSent} + ${increments.emailsSent ?? 0}`,
             copilotsCreated: sql`${usageTable.copilotsCreated} + ${increments.copilotsCreated ?? 0}`,
-            emailProfilesCreated: sql`${usageTable.emailProfilesCreated} + ${increments.emailProfilesCreated ?? 0}`,
+            emailAccountsCreated: sql`${usageTable.emailAccountsCreated} + ${increments.emailAccountsCreated ?? 0}`,
             updatedAt: now,
         })
         .where(

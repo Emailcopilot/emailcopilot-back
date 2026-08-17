@@ -1,29 +1,30 @@
 import { Router } from "express";
 import { validate } from "../middleware/validate.middleware";
 import {
-  createEmailProfileSchema,
-  updateEmailProfileSchema,
-} from "../validators/email-profile.validator";
-import * as emailProfileService from "../services/email-profile.service";
+  createEmailAccountSchema,
+  updateEmailAccountSchema,
+} from "../validators/email-account.validator";
+import * as emailAccountService from "../services/email-account.service";
 
-export const emailProfilesRouter: Router = Router();
+export const emailAccountsRouter: Router = Router();
+export const emailProfilesRouter = emailAccountsRouter;
 
-emailProfilesRouter.get("/", emailProfileService.listEmailProfiles);
+emailAccountsRouter.get("/", emailAccountService.listEmailAccounts);
 
-emailProfilesRouter.get("/:id", emailProfileService.getEmailProfile);
+emailAccountsRouter.get("/:id", emailAccountService.getEmailAccount);
 
-emailProfilesRouter.post(
+emailAccountsRouter.post(
   "/",
-  validate(createEmailProfileSchema),
-  emailProfileService.createEmailProfile,
+  validate(createEmailAccountSchema),
+  emailAccountService.createEmailAccount,
 );
 
-emailProfilesRouter.put(
+emailAccountsRouter.put(
   "/:id",
-  validate(updateEmailProfileSchema),
-  emailProfileService.updateEmailProfile,
+  validate(updateEmailAccountSchema),
+  emailAccountService.updateEmailAccount,
 );
 
-emailProfilesRouter.delete("/:id", emailProfileService.deleteEmailProfile);
+emailAccountsRouter.delete("/:id", emailAccountService.deleteEmailAccount);
 
-emailProfilesRouter.post("/:id/verify", emailProfileService.verifyEmailProfile);
+emailAccountsRouter.post("/:id/verify", emailAccountService.verifyEmailAccount);

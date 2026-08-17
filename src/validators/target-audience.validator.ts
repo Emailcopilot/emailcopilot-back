@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const createScrapeProfileSchema = z.object({
+export const createTargetAudienceSchema = z.object({
   name: z.string().min(1).max(255),
   searchQuery: z.string().min(1).max(500),
   country: z.string().optional(),
@@ -9,11 +9,11 @@ export const createScrapeProfileSchema = z.object({
   schedule: z.string().optional(), // cron expression
 });
 
-export const updateScrapeProfileSchema = createScrapeProfileSchema.partial();
+export const updateTargetAudienceSchema = createTargetAudienceSchema.partial();
 
-export type CreateScrapeProfileInput = z.infer<
-  typeof createScrapeProfileSchema
+export type CreateTargetAudienceInput = z.infer<
+  typeof createTargetAudienceSchema
 >;
-export type UpdateScrapeProfileInput = z.infer<
-  typeof updateScrapeProfileSchema
+export type UpdateTargetAudienceInput = z.infer<
+  typeof updateTargetAudienceSchema
 >;

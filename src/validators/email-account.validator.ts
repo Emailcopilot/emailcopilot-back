@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const createEmailProfileSchema = z.object({
+export const createEmailAccountSchema = z.object({
   profileName: z.string().min(1).max(100),
   email: z.email(),
   sendName: z.string().min(1).max(100).optional(),
@@ -11,12 +11,12 @@ export const createEmailProfileSchema = z.object({
   dailyLimit: z.number().int().min(1).max(10000).default(50),
 });
 
-export const updateEmailProfileSchema = createEmailProfileSchema
+export const updateEmailAccountSchema = createEmailAccountSchema
   .omit({ smtpPass: true })
   .partial()
   .extend({
     smtpPass: z.string().min(1).optional(), // optional on update
   });
 
-export type CreateEmailProfileInput = z.infer<typeof createEmailProfileSchema>;
-export type UpdateEmailProfileInput = z.infer<typeof updateEmailProfileSchema>;
+export type CreateEmailAccountInput = z.infer<typeof createEmailAccountSchema>;
+export type UpdateEmailAccountInput = z.infer<typeof updateEmailAccountSchema>;

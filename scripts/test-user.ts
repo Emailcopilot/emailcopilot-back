@@ -8,9 +8,9 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../src/db/drizzle";
 import {
   usersTable,
-  emailProfilesTable,
+  emailAccountTable,
   emailTemplatesTable,
-  scrapeProfilesTable,
+  targetAudienceTable,
   copilotsTable,
   subscriptionsTable,
   usageTable,
@@ -165,15 +165,15 @@ async function ensureTestUser(config: TestUserConfig) {
     console.log("✅ Created usage record", usageRow.id);
   }
 
-  let [scrapeProfile] = await db
+  let [targetAudience] = await db
     .select()
-    .from(scrapeProfilesTable)
-    .where(eq(scrapeProfilesTable.userId, user.id))
+    .from(targetAudienceTable)
+    .where(eq(targetAudienceTable.userId, user.id))
     .limit(1);
 
-  if (!scrapeProfile) {
-    [scrapeProfile] = await db
-      .insert(scrapeProfilesTable)
+  if (!targetAudience) {
+    [targetAudience] = await db
+      .insert(targetAudienceTable)
       .values({
         userId: user.id,
         name: `${config.firstName} scrape profile`,
@@ -181,23 +181,23 @@ async function ensureTestUser(config: TestUserConfig) {
         status: "idle",
       })
       .returning();
-    console.log("✅ Created scrape profile", scrapeProfile.id);
+    console.log("✅ Created scrape profile", targetAudience.id);
   }
 
-  let [emailProfile] = await db
+  let [emailAccount] = await db
     .select()
-    .from(emailProfilesTable)
-    .where(eq(emailProfilesTable.userId, user.id))
+    .from(emailAccountTable)
+    .where(eq(emailAccountTable.userId, user.id))
     .limit(1);
 
   let smtp: { email: string; pass: string; host: string; port: number };
 
-  if (!emailProfile) {
+  if (!emailAccount) {
     smtp = await resolveSmtpCreds();
     console.log("✅ Ethereal SMTP account:", smtp.email);
 
-    [emailProfile] = await db
-      .insert(emailProfilesTable)
+    [emailAccount] = await db
+      .insert(emailAccountTable)
       .values({
         userId: user.id,
         profileName: "Test SMTP",
@@ -211,15 +211,15 @@ async function ensureTestUser(config: TestUserConfig) {
         lastVerifiedAt: new Date(),
       })
       .returning();
-    console.log("✅ Created email profile", emailProfile.id);
+    console.log("✅ Created email profile", emailAccount.id);
   } else {
     smtp = {
-      email: emailProfile.email,
-      pass: emailProfile.smtpPass ?? "",
-      host: emailProfile.smtpHost ?? "",
-      port: emailProfile.smtpPort ?? 587,
+      email: emailAccount.email,
+      pass: emailAccount.smtpPass ?? "",
+      host: emailAccount.smtpHost ?? "",
+      port: emailAccount.smtpPort ?? 587,
     };
-    console.log("ℹ️  Using existing email profile", emailProfile.id);
+    console.log("ℹ️  Using existing email profile", emailAccount.id);
   }
 
   let [template] = await db
@@ -263,8 +263,8 @@ async function ensureTestUser(config: TestUserConfig) {
         sendingHours: { start: "09:00", end: "17:00" },
         sendingHoursActive: false,
         timezone: config.timezone,
-        emailProfileId: emailProfile!.id,
-        scrapeProfileId: scrapeProfile!.id,
+        emailAccountId: emailAccount!.id,
+        targetAudienceId: targetAudience!.id,
         templateId: template!.id,
       })
       .returning();
@@ -273,8 +273,8 @@ async function ensureTestUser(config: TestUserConfig) {
     [copilot] = await db
       .update(copilotsTable)
       .set({
-        emailProfileId: emailProfile!.id,
-        scrapeProfileId: scrapeProfile!.id,
+        emailAccountId: emailAccount!.id,
+        targetAudienceId: targetAudience!.id,
         templateId: template!.id,
         status: "active",
         timezone: config.timezone,
@@ -289,8 +289,8 @@ async function ensureTestUser(config: TestUserConfig) {
     user,
     subscription,
     usage: usageRow,
-    scrapeProfile,
-    emailProfile,
+    targetAudience,
+    emailAccount,
     template,
     copilot,
     smtp: { email: smtp.email, host: smtp.host, port: smtp.port },
@@ -299,9 +299,9 @@ async function ensureTestUser(config: TestUserConfig) {
 
 async function truncateAllTables() {
   await db.execute(sql`TRUNCATE TABLE users CASCADE`);
-  await db.execute(sql`TRUNCATE TABLE email_profiles CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE email_account CASCADE`);
   await db.execute(sql`TRUNCATE TABLE email_templates CASCADE`);
-  await db.execute(sql`TRUNCATE TABLE scrape_profiles CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE target_audience CASCADE`);
   await db.execute(sql`TRUNCATE TABLE copilots CASCADE`);
   await db.execute(sql`TRUNCATE TABLE subscriptions CASCADE`);
   await db.execute(sql`TRUNCATE TABLE usage CASCADE`);
@@ -322,7 +322,7 @@ async function main() {
   console.log("\n─── Summary ───");
   for (const data of results) {
     console.log(
-      `${data.user.email}: id=${data.user.id}, clerkId=${data.user.clerkId}, scrape="${data.scrapeProfile.searchQuery}", copilot="${data.copilot.name}"`,
+      `${data.user.email}: id=${data.user.id}, clerkId=${data.user.clerkId}, scrape="${data.targetAudience.searchQuery}", copilot="${data.copilot.name}"`,
     );
   }
   console.log(`\n🎉 ${results.length} test users ready`);

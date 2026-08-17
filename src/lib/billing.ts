@@ -10,7 +10,7 @@ export const PLANS = [
     currency: "EUR",
     maxEmailsPerMonth: 250,
     maxCopilots: 1,
-    maxEmailProfiles: 1,
+    maxEmailAccounts: 1,
     features: [
       "1 Copilots",
       "1 SMTP account",
@@ -28,7 +28,7 @@ export const PLANS = [
     currency: "EUR",
     maxEmailsPerMonth: 750,
     maxCopilots: 3,
-    maxEmailProfiles: 3,
+    maxEmailAccounts: 3,
     highlight: true,
     features: [
       "3 Copilots",
@@ -47,7 +47,7 @@ export const PLANS = [
     currency: "EUR",
     maxEmailsPerMonth: 2000,
     maxCopilots: null as number | null, // unlimited
-    maxEmailProfiles: null as number | null, // unlimited
+    maxEmailAccounts: null as number | null, // unlimited
     features: [
       "Unlimited Copilots",
       "Unlimited SMTP accounts",
@@ -63,7 +63,7 @@ export const PLAN_LIMITS: Record<
   {
     emailsPerMonth: number;
     copilots: number | null;
-    emailProfiles: number | null;
+    emailAccounts: number | null;
     hasApiAccess: boolean;
     hasUnlimitedTemplates: boolean;
   }
@@ -71,21 +71,21 @@ export const PLAN_LIMITS: Record<
   starter: {
     emailsPerMonth: 250,
     copilots: 1,
-    emailProfiles: 1,
+    emailAccounts: 1,
     hasApiAccess: false,
     hasUnlimitedTemplates: false,
   },
   growth: {
     emailsPerMonth: 750,
     copilots: 3,
-    emailProfiles: 3,
+    emailAccounts: 3,
     hasApiAccess: true,
     hasUnlimitedTemplates: true,
   },
   scale: {
     emailsPerMonth: 2000,
     copilots: null,
-    emailProfiles: null,
+    emailAccounts: null,
     hasApiAccess: true,
     hasUnlimitedTemplates: true,
   },

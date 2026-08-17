@@ -13,8 +13,8 @@ import { scrapeJobsRouter } from "./routes/scrape-jobs";
 import { templatesRouter } from "./routes/templates";
 import { billingRouter } from "./routes/billing";
 import { copilotsRouter } from "./routes/copilots";
-import { emailProfilesRouter } from "./routes/email-profiles";
-import { scrapeProfilesRouter } from "./routes/scrape-profiles";
+import { emailAccountsRouter } from "./routes/email-accounts";
+import { targetAudiencesRouter } from "./routes/target-audiences";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
@@ -66,12 +66,23 @@ app.use("/users", usersRouter);
 
 app.use(requireAuth);
 
+function deprecateLegacyRoute(
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  res.set("Deprecation", "true");
+  next();
+}
+
 app.use("/leads", leadsRouter);
 app.use("/templates", templatesRouter);
 app.use("/copilots", copilotsRouter);
 app.use("/scrape-jobs", scrapeJobsRouter);
-app.use("/email-profiles", emailProfilesRouter);
-app.use("/scrape-profiles", scrapeProfilesRouter);
+app.use("/email-accounts", emailAccountsRouter);
+app.use("/email-profiles", deprecateLegacyRoute, emailAccountsRouter);
+app.use("/target-audiences", targetAudiencesRouter);
+app.use("/scrape-profiles", deprecateLegacyRoute, targetAudiencesRouter);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 

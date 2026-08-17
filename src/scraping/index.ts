@@ -3,7 +3,7 @@ import { db } from "../db/drizzle";
 import {
   copilotsTable,
   leadsTable,
-  scrapeProfilesTable,
+  targetAudienceTable,
   copilotLeadsTable,
   scrapeJobsTable,
 } from "../db/schema";
@@ -41,18 +41,18 @@ const stopScrapeJob = async ({
 };
 
 async function launchScrapeJob(copilot: Copilot): Promise<number | undefined> {
-  if (!copilot.scrapeProfileId) {
-    await pauseCopilot(copilot.id, "No scrape profile configured");
+  if (!copilot.targetAudienceId) {
+    await pauseCopilot(copilot.id, "No target audience configured");
     return;
   }
 
-  const [scrapeProfile] = await db
+  const [targetAudience] = await db
     .select()
-    .from(scrapeProfilesTable)
-    .where(eq(scrapeProfilesTable.id, copilot.scrapeProfileId))
+    .from(targetAudienceTable)
+    .where(eq(targetAudienceTable.id, copilot.targetAudienceId))
     .limit(1);
 
-  if (!scrapeProfile) {
+  if (!targetAudience) {
     await pauseCopilot(copilot.id, "Scrape profile not found");
     return;
   }
@@ -61,8 +61,8 @@ async function launchScrapeJob(copilot: Copilot): Promise<number | undefined> {
     .insert(scrapeJobsTable)
     .values({
       userId: copilot.userId,
-      scrapeProfileId: copilot.scrapeProfileId,
-      query: scrapeProfile.searchQuery,
+      targetAudienceId: copilot.targetAudienceId,
+      query: targetAudience.searchQuery,
       status: "running",
     })
     .returning();
@@ -97,7 +97,7 @@ async function getRunningScrapeJob(copilot: Copilot) {
     }
   }
 
-  if (!copilot.scrapeProfileId) {
+  if (!copilot.targetAudienceId) {
     return null;
   }
 
@@ -107,7 +107,7 @@ async function getRunningScrapeJob(copilot: Copilot) {
     .where(
       and(
         eq(scrapeJobsTable.status, "running"),
-        eq(scrapeJobsTable.scrapeProfileId, copilot.scrapeProfileId),
+        eq(scrapeJobsTable.targetAudienceId, copilot.targetAudienceId),
         eq(scrapeJobsTable.userId, copilot.userId),
       ),
     )
@@ -198,29 +198,29 @@ async function runScrapeJob(
     return;
   }
 
-  if (!copilot.scrapeProfileId) {
+  if (!copilot.targetAudienceId) {
     await stopScrapeJob({
       scrapeJobId: runningJob.id,
       status: "failed",
-      errorMessage: "No scrape profile configured",
+      errorMessage: "No target audience configured",
     });
-    await pauseCopilot(copilot.id, "No scrape profile configured");
+    await pauseCopilot(copilot.id, "No target audience configured");
     return;
   }
 
-  const [scrapeProfile] = await db
+  const [targetAudience] = await db
     .select()
-    .from(scrapeProfilesTable)
-    .where(eq(scrapeProfilesTable.id, copilot.scrapeProfileId))
+    .from(targetAudienceTable)
+    .where(eq(targetAudienceTable.id, copilot.targetAudienceId))
     .limit(1);
 
-  if (!scrapeProfile) {
+  if (!targetAudience) {
     await stopScrapeJob({
       scrapeJobId: runningJob.id,
       status: "failed",
-      errorMessage: "Scrape profile not found",
+      errorMessage: "Target audience not found",
     });
-    await pauseCopilot(copilot.id, "Scrape profile not found");
+    await pauseCopilot(copilot.id, "Target audience not found");
     return;
   }
 
@@ -289,7 +289,7 @@ async function runScrapeJob(
     return;
   }
 
-  const searchQuery = scrapeProfile.searchQuery;
+  const searchQuery = targetAudience.searchQuery;
   const copilotId = copilot.id;
 
   const existingLeads = await db
@@ -331,8 +331,8 @@ async function runScrapeJob(
     listings = await listGoogleMapsListings({
       browser,
       keyword: searchQuery,
-      city: scrapeProfile.city ?? "",
-      country: scrapeProfile.country ?? "",
+      city: targetAudience.city ?? "",
+      country: targetAudience.country ?? "",
       max: maxListings,
       feedsListingFilter: async (card) => {
         if (!card.placeId) {

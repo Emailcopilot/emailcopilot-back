@@ -8,6 +8,7 @@ import {
   timestamp,
   pgEnum,
   jsonb,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import * as d from "drizzle-orm/pg-core";
 
@@ -26,7 +27,7 @@ export const emailProviderEnum = pgEnum("email_provider", [
   "outlook",
   "smtp",
 ]);
-export const emailProfileStatusEnum = pgEnum("email_profile_status", [
+export const emailAccountStatusEnum = pgEnum("email_account_status", [
   "active",
   "inactive",
   "error",
@@ -95,26 +96,30 @@ export const usersTable = pgTable("users", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Email Profiles ───────────────────────────────────────────────────────────
+// ─── Email Accounts ───────────────────────────────────────────────────────────
 
-export const emailProfilesTable = pgTable("email_profiles", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => usersTable.id, { onDelete: "cascade" }),
-  profileName: varchar("profile_name", { length: 100 }).notNull(),
-  email: varchar("email", { length: 255 }).notNull(),
-  sendName: varchar("send_name", { length: 100 }),
-  provider: emailProviderEnum("provider").notNull().default("smtp"),
-  smtpHost: varchar("smtp_host", { length: 255 }),
-  smtpPort: integer("smtp_port").default(587),
-  smtpPass: text("smtp_pass"), // store encrypted in practice
-  status: emailProfileStatusEnum("status").notNull().default("inactive"),
-  sentToday: integer("sent_today").notNull().default(0),
-  lastVerifiedAt: timestamp("last_verified_at"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const emailAccountTable = pgTable(
+  "email_account",
+  {
+    id: serial("id"),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    profileName: varchar("profile_name", { length: 100 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    sendName: varchar("send_name", { length: 100 }),
+    provider: emailProviderEnum("provider").notNull().default("smtp"),
+    smtpHost: varchar("smtp_host", { length: 255 }),
+    smtpPort: integer("smtp_port").default(587),
+    smtpPass: text("smtp_pass"), // store encrypted in practice
+    status: emailAccountStatusEnum("status").notNull().default("inactive"),
+    sentToday: integer("sent_today").notNull().default(0),
+    lastVerifiedAt: timestamp("last_verified_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "email_account_pkey", columns: [table.id] })],
+);
 
 // ─── Email Templates ──────────────────────────────────────────────────────────
 
@@ -133,37 +138,43 @@ export const emailTemplatesTable = pgTable("email_templates", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Scrape Profiles ──────────────────────────────────────────────────────────
+// ─── Target Audiences ─────────────────────────────────────────────────────────
 // User-facing config: what to search, how many results, on what schedule.
 // Each execution creates one scrapeJob row.
 
-export const scrapeProfilesTable = pgTable("scrape_profiles", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => usersTable.id, { onDelete: "cascade" }),
-  name: varchar("name", { length: 100 }).notNull(),
-  searchQuery: varchar("search_query", { length: 500 }).notNull(),
-  country: varchar({ length: 100 }),
-  city: varchar({ length: 100 }),
-  status: scrapeStatusEnum("status").notNull().default("idle"),
-  resultsCount: integer("results_count").notNull().default(0),
-  lastRun: timestamp("last_run"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const targetAudienceTable = pgTable(
+  "target_audience",
+  {
+    id: serial("id"),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    searchQuery: varchar("search_query", { length: 500 }).notNull(),
+    country: varchar({ length: 100 }),
+    city: varchar({ length: 100 }),
+    status: scrapeStatusEnum("status").notNull().default("idle"),
+    resultsCount: integer("results_count").notNull().default(0),
+    lastRun: timestamp("last_run"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "target_audience_pkey", columns: [table.id] }),
+  ],
+);
 
 // ─── Scrape Jobs ──────────────────────────────────────────────────────────────
-// One row per execution. Links back to the profile that triggered it.
+// One row per execution. Links back to the audience that triggered it.
 
 export const scrapeJobsTable = pgTable("scrape_jobs", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => usersTable.id, {
     onDelete: "set null",
   }),
-  // ✅ Added: which profile triggered this job (null for ad-hoc calls)
-  scrapeProfileId: integer("scrape_profile_id").references(
-    () => scrapeProfilesTable.id,
+  // which audience triggered this job (null for ad-hoc calls)
+  targetAudienceId: integer("target_audience_id").references(
+    () => targetAudienceTable.id,
     { onDelete: "set null" },
   ),
   query: text("query").notNull(),
@@ -228,14 +239,14 @@ export const copilotsTable = pgTable("copilots", {
   sendingHoursActive: boolean("sending_hours_active").notNull().default(false),
   timezone: varchar("timezone", { length: 100 }).notNull().default("UTC"),
   status: copilotStatusEnum("status").notNull().default("draft"),
-  emailProfileId: integer("email_profile_id").references(
-    () => emailProfilesTable.id,
+  emailAccountId: integer("email_account_id").references(
+    () => emailAccountTable.id,
     {
       onDelete: "set null",
     },
   ),
-  scrapeProfileId: integer("scrape_profile_id").references(
-    () => scrapeProfilesTable.id,
+  targetAudienceId: integer("target_audience_id").references(
+    () => targetAudienceTable.id,
     {
       onDelete: "set null",
     },
@@ -307,7 +318,7 @@ export const usageTable = pgTable("usage", {
   periodEnd: timestamp("period_end").notNull(),
   emailsSent: integer("emails_sent").notNull().default(0),
   copilotsCreated: integer("copilots_created").notNull().default(0),
-  emailProfilesCreated: integer("email_profiles_created").notNull().default(0),
+  emailAccountsCreated: integer("email_accounts_created").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -316,14 +327,14 @@ export const usageTable = pgTable("usage", {
 export type User = typeof usersTable.$inferSelect;
 export type NewUser = typeof usersTable.$inferInsert;
 
-export type EmailProfile = typeof emailProfilesTable.$inferSelect;
-export type NewEmailProfile = typeof emailProfilesTable.$inferInsert;
+export type EmailAccount = typeof emailAccountTable.$inferSelect;
+export type NewEmailAccount = typeof emailAccountTable.$inferInsert;
 
 export type EmailTemplate = typeof emailTemplatesTable.$inferSelect;
 export type NewEmailTemplate = typeof emailTemplatesTable.$inferInsert;
 
-export type ScrapeProfile = typeof scrapeProfilesTable.$inferSelect;
-export type NewScrapeProfile = typeof scrapeProfilesTable.$inferInsert;
+export type TargetAudience = typeof targetAudienceTable.$inferSelect;
+export type NewTargetAudience = typeof targetAudienceTable.$inferInsert;
 
 export type ScrapeJob = typeof scrapeJobsTable.$inferSelect;
 export type NewScrapeJob = typeof scrapeJobsTable.$inferInsert;

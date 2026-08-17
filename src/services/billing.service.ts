@@ -6,7 +6,7 @@ import {
   usersTable,
   usageTable,
   copilotsTable,
-  emailProfilesTable,
+  emailAccountTable,
 } from "../db/schema";
 import { eq, desc, and, lte, gte, ne, count } from "drizzle-orm";
 import createMollieClient, {
@@ -41,7 +41,12 @@ function mapMollieStatus(
 }
 
 export function listPlans(_req: Request, res: Response) {
-  res.json(PLANS);
+  res.json(
+    PLANS.map((plan) => ({
+      ...plan,
+      maxEmailProfiles: plan.maxEmailAccounts,
+    })),
+  );
 }
 
 export async function getSubscription(req: Request, res: Response) {
@@ -264,12 +269,16 @@ export async function getLimits(req: Request, res: Response) {
     .from(copilotsTable)
     .where(and(eq(copilotsTable.userId, userId), ne(copilotsTable.status, "archived")));
 
-  const [{ emailProfilesCount }] = await db
-    .select({ emailProfilesCount: count(emailProfilesTable.id) })
-    .from(emailProfilesTable)
-    .where(eq(emailProfilesTable.userId, userId));
+  const [{ emailAccountsCount }] = await db
+    .select({ emailAccountsCount: count(emailAccountTable.id) })
+    .from(emailAccountTable)
+    .where(eq(emailAccountTable.userId, userId));
 
   const emailsSent = currentUsage?.emailsSent ?? 0;
+  const emailAccountsRemaining =
+    planLimits.emailAccounts === null
+      ? null
+      : Math.max(0, planLimits.emailAccounts - emailAccountsCount);
 
   res.json({
     hasActivePlan: true,
@@ -280,7 +289,8 @@ export async function getLimits(req: Request, res: Response) {
     limits: {
       emailsPerMonth: planLimits.emailsPerMonth,
       copilots: planLimits.copilots,
-      emailProfiles: planLimits.emailProfiles,
+      emailAccounts: planLimits.emailAccounts,
+      emailProfiles: planLimits.emailAccounts,
       hasApiAccess: planLimits.hasApiAccess,
       hasUnlimitedTemplates: planLimits.hasUnlimitedTemplates,
     },
@@ -296,11 +306,10 @@ export async function getLimits(req: Request, res: Response) {
         planLimits.copilots === null
           ? null
           : Math.max(0, planLimits.copilots - copilotsCount),
-      emailProfilesCount,
-      emailProfilesRemaining:
-        planLimits.emailProfiles === null
-          ? null
-          : Math.max(0, planLimits.emailProfiles - emailProfilesCount),
+      emailAccountsCount,
+      emailProfilesCount: emailAccountsCount,
+      emailAccountsRemaining,
+      emailProfilesRemaining: emailAccountsRemaining,
     },
   });
 }
@@ -562,7 +571,7 @@ async function ensureUsageRecord(
       periodEnd,
       emailsSent: 0,
       copilotsCreated: 0,
-      emailProfilesCreated: 0,
+      emailAccountsCreated: 0,
     })
     .returning();
 

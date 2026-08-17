@@ -282,7 +282,7 @@ async function resolveCopilotWithPendingScrapeJob(): Promise<Copilot | null> {
     .innerJoin(
       copilotsTable,
       and(
-        eq(copilotsTable.scrapeProfileId, scrapeJobsTable.scrapeProfileId),
+        eq(copilotsTable.targetAudienceId, scrapeJobsTable.targetAudienceId),
         eq(copilotsTable.userId, scrapeJobsTable.userId),
       ),
     )

@@ -1,27 +1,28 @@
 import { Router } from "express";
 import { validate } from "../middleware/validate.middleware";
 import {
-  createScrapeProfileSchema,
-  updateScrapeProfileSchema,
-} from "../validators/scrape-profile.validator";
-import * as scrapeProfileService from "../services/scrape-profile.service";
+  createTargetAudienceSchema,
+  updateTargetAudienceSchema,
+} from "../validators/target-audience.validator";
+import * as targetAudienceService from "../services/target-audience.service";
 
-export const scrapeProfilesRouter: Router = Router();
+export const targetAudiencesRouter: Router = Router();
+export const scrapeProfilesRouter = targetAudiencesRouter;
 
-scrapeProfilesRouter.get("/", scrapeProfileService.listScrapeProfiles);
+targetAudiencesRouter.get("/", targetAudienceService.listTargetAudiences);
 
-scrapeProfilesRouter.get("/:id", scrapeProfileService.getScrapeProfile);
+targetAudiencesRouter.get("/:id", targetAudienceService.getTargetAudience);
 
-scrapeProfilesRouter.post(
+targetAudiencesRouter.post(
   "/",
-  validate(createScrapeProfileSchema),
-  scrapeProfileService.createScrapeProfile,
+  validate(createTargetAudienceSchema),
+  targetAudienceService.createTargetAudience,
 );
 
-scrapeProfilesRouter.put(
+targetAudiencesRouter.put(
   "/:id",
-  validate(updateScrapeProfileSchema),
-  scrapeProfileService.updateScrapeProfile,
+  validate(updateTargetAudienceSchema),
+  targetAudienceService.updateTargetAudience,
 );
 
-scrapeProfilesRouter.delete("/:id", scrapeProfileService.deleteScrapeProfile);
+targetAudiencesRouter.delete("/:id", targetAudienceService.deleteTargetAudience);

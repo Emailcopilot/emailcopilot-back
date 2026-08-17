@@ -1,8 +1,8 @@
 import { testSmtpConnection } from "../src/services/mailer.service";
-import { verifyEmailProfileForUser } from "../src/services/email-profile.service";
+import { verifyEmailAccountForUser } from "../src/services/email-account.service";
 
 async function main() {
-  const result = await verifyEmailProfileForUser(53, 46);
+  const result = await verifyEmailAccountForUser(53, 46);
 
   console.log(result);
 }

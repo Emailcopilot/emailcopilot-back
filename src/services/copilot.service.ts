@@ -3,8 +3,8 @@ import { db } from "../db/drizzle";
 import {
   copilotsTable,
   subscriptionsTable,
-  scrapeProfilesTable,
-  emailProfilesTable,
+  targetAudienceTable,
+  emailAccountTable,
   emailTemplatesTable,
   scrapeJobsTable,
 } from "../db/schema";
@@ -20,6 +20,10 @@ import type {
   UpdateCopilotInput,
   UpdateCopilotStatusInput,
 } from "../validators/copilot.validator";
+import {
+  normalizeCopilotInput,
+  withLegacyCopilotKeys,
+} from "../lib/api-aliases";
 
 async function getActiveSubscription(userId: number) {
   const subs = await db
@@ -66,11 +70,11 @@ async function validateCopilotCanActivate(copilotId: number) {
 
   const errors: string[] = [];
 
-  if (!copilot.emailProfileId) {
-    errors.push("email profile");
+  if (!copilot.emailAccountId) {
+    errors.push("email account");
   }
-  if (!copilot.scrapeProfileId) {
-    errors.push("scrape profile");
+  if (!copilot.targetAudienceId) {
+    errors.push("target audience");
   }
   if (!copilot.templateId) {
     errors.push("template");
@@ -83,19 +87,19 @@ async function validateCopilotCanActivate(copilotId: number) {
     );
   }
 
-  if (!copilot.emailProfileId) {
-    throw Object.assign(new Error("Email profile is not properly configured"), {
+  if (!copilot.emailAccountId) {
+    throw Object.assign(new Error("Email account is not properly configured"), {
       statusCode: 400,
     });
   }
 
   const [profile] = await db
     .select()
-    .from(emailProfilesTable)
-    .where(eq(emailProfilesTable.id, copilot.emailProfileId));
+    .from(emailAccountTable)
+    .where(eq(emailAccountTable.id, copilot.emailAccountId));
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw Object.assign(new Error("Email profile is not properly configured"), {
+    throw Object.assign(new Error("Email account is not properly configured"), {
       statusCode: 400,
     });
   }
@@ -107,18 +111,18 @@ export async function listCopilots(req: Request, res: Response) {
   const rows = await db
     .select({
       ...getTableColumns(copilotsTable),
-      scrapeProfile: getTableColumns(scrapeProfilesTable),
-      emailProfile: getTableColumns(emailProfilesTable),
+      targetAudience: getTableColumns(targetAudienceTable),
+      emailAccount: getTableColumns(emailAccountTable),
       template: getTableColumns(emailTemplatesTable),
     })
     .from(copilotsTable)
-    .leftJoin(scrapeProfilesTable, eq(copilotsTable.scrapeProfileId, scrapeProfilesTable.id))
-    .leftJoin(emailProfilesTable, eq(copilotsTable.emailProfileId, emailProfilesTable.id))
+    .leftJoin(targetAudienceTable, eq(copilotsTable.targetAudienceId, targetAudienceTable.id))
+    .leftJoin(emailAccountTable, eq(copilotsTable.emailAccountId, emailAccountTable.id))
     .leftJoin(emailTemplatesTable, eq(copilotsTable.templateId, emailTemplatesTable.id))
     .orderBy(desc(copilotsTable.createdAt))
     .where(eq(copilotsTable.userId, userId));
 
-  res.json(rows);
+  res.json(rows.map(withLegacyCopilotKeys));
 }
 
 export async function getCopilot(req: Request<{ id: string }>, res: Response) {
@@ -128,58 +132,58 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
   const [row] = await db
     .select({
       ...getTableColumns(copilotsTable),
-      scrapeProfile: getTableColumns(scrapeProfilesTable),
-      emailProfile: getTableColumns(emailProfilesTable),
+      targetAudience: getTableColumns(targetAudienceTable),
+      emailAccount: getTableColumns(emailAccountTable),
       template: getTableColumns(emailTemplatesTable),
     })
     .from(copilotsTable)
-    .leftJoin(scrapeProfilesTable, eq(copilotsTable.scrapeProfileId, scrapeProfilesTable.id))
-    .leftJoin(emailProfilesTable, eq(copilotsTable.emailProfileId, emailProfilesTable.id))
+    .leftJoin(targetAudienceTable, eq(copilotsTable.targetAudienceId, targetAudienceTable.id))
+    .leftJoin(emailAccountTable, eq(copilotsTable.emailAccountId, emailAccountTable.id))
     .leftJoin(emailTemplatesTable, eq(copilotsTable.templateId, emailTemplatesTable.id))
     .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!row)
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
 
-  res.json(row);
+  res.json(withLegacyCopilotKeys(row));
 }
 
 export async function createCopilot(req: Request, res: Response) {
   const userId = req.dbUser!.id;
-  const data = req.body as CreateCopilotInput;
+  const data = normalizeCopilotInput(req.body as CreateCopilotInput);
 
   const sub = await getActiveSubscription(userId);
   await assertCopilotWithinPlanLimit(userId, sub.planId);
 
   const created = await db.transaction(async (tx) => {
-    let scrapeProfileId = data.scrapeProfileId ?? null;
-    const scrapeProfile = data.scrapeProfile ?? null;
-    let scrapeProfileData = null;
+    let targetAudienceId = data.targetAudienceId ?? null;
+    const targetAudience = data.targetAudience ?? null;
+    let targetAudienceData = null;
 
-    let emailProfileId = data.emailProfileId ?? null;
-    const emailProfile = data.emailProfile ?? null;
-    let emailProfileData = null;
+    let emailAccountId = data.emailAccountId ?? null;
+    const emailAccount = data.emailAccount ?? null;
+    let emailAccountData = null;
 
     let templateId = data.templateId ?? null;
     const template = data.template ?? null;
     let templateData = null;
 
-    if (!scrapeProfileId && scrapeProfile) {
+    if (!targetAudienceId && targetAudience) {
       const [profile] = await tx
-        .insert(scrapeProfilesTable)
-        .values({ ...scrapeProfile, userId })
+        .insert(targetAudienceTable)
+        .values({ ...targetAudience, userId })
         .returning();
-      scrapeProfileId = profile.id;
-      scrapeProfileData = profile;
+      targetAudienceId = profile.id;
+      targetAudienceData = profile;
     }
 
-    if (!emailProfileId && emailProfile) {
+    if (!emailAccountId && emailAccount) {
       const [profile] = await tx
-        .insert(emailProfilesTable)
-        .values({ ...emailProfile, userId })
+        .insert(emailAccountTable)
+        .values({ ...emailAccount, userId })
         .returning();
-      emailProfileId = profile.id;
-      emailProfileData = profile;
+      emailAccountId = profile.id;
+      emailAccountData = profile;
     }
 
     if (!templateId && template) {
@@ -193,27 +197,40 @@ export async function createCopilot(req: Request, res: Response) {
 
     const [row] = await tx
       .insert(copilotsTable)
-      .values({ ...data, userId, scrapeProfileId, emailProfileId, templateId })
+      .values({
+        name: data.name,
+        description: data.description,
+        sendLimit: data.sendLimit,
+        sendLimitActive: data.sendLimitActive,
+        activeDays: data.activeDays,
+        sendingHours: data.sendingHours,
+        sendingHoursActive: data.sendingHoursActive,
+        timezone: data.timezone,
+        userId,
+        targetAudienceId,
+        emailAccountId,
+        templateId,
+      })
       .returning();
 
     await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
 
-    if (scrapeProfileId && !scrapeProfileData) {
+    if (targetAudienceId && !targetAudienceData) {
       const [profile] = await tx
         .select()
-        .from(scrapeProfilesTable)
-        .where(eq(scrapeProfilesTable.id, scrapeProfileId));
+        .from(targetAudienceTable)
+        .where(eq(targetAudienceTable.id, targetAudienceId));
 
-      scrapeProfileData = profile;
+      targetAudienceData = profile;
     }
 
-    if (emailProfileId && !emailProfileData) {
+    if (emailAccountId && !emailAccountData) {
       const [profile] = await tx
         .select()
-        .from(emailProfilesTable)
-        .where(eq(emailProfilesTable.id, emailProfileId));
+        .from(emailAccountTable)
+        .where(eq(emailAccountTable.id, emailAccountId));
 
-      emailProfileData = profile;
+      emailAccountData = profile;
     }
 
     if (templateId && !templateData) {
@@ -227,13 +244,13 @@ export async function createCopilot(req: Request, res: Response) {
 
     return {
       ...row,
-      scrapeProfile: scrapeProfileData,
-      emailProfile: emailProfileData,
+      targetAudience: targetAudienceData,
+      emailAccount: emailAccountData,
       template: templateData,
     };
   });
 
-  res.status(201).json(created);
+  res.status(201).json(withLegacyCopilotKeys(created));
 }
 
 export async function updateCopilot(
@@ -242,37 +259,43 @@ export async function updateCopilot(
 ) {
   const id = Number(req.params.id);
   const userId = req.dbUser!.id;
-  const data = req.body as UpdateCopilotInput;
+  const data = normalizeCopilotInput(req.body as UpdateCopilotInput);
+  const {
+    targetAudience: nestedTargetAudience,
+    emailAccount: nestedEmailAccount,
+    template: nestedTemplate,
+    ...copilotFields
+  } = data;
 
-  let scrapeProfileId = data.scrapeProfileId ?? null;
-  const scrapeProfile = data.scrapeProfile ?? null;
+  let targetAudienceId = data.targetAudienceId ?? null;
+  const targetAudience = nestedTargetAudience ?? null;
 
-  let emailProfileId = data.emailProfileId ?? null;
-  const emailProfile = data.emailProfile ?? null;
+  let emailAccountId = data.emailAccountId ?? null;
+  const emailAccount = nestedEmailAccount ?? null;
 
   let templateId = data.templateId ?? null;
-  const template = data.template ?? null;
+  const template = nestedTemplate ?? null;
 
   const updated = await db.transaction(async (tx) => {
-    let emailProfileData = null;
-    let scrapeProfileData = null;
+    let emailAccountData = null;
+    let targetAudienceData = null;
     let templateData = null;
-    if (!scrapeProfileId && scrapeProfile) {
+    if (!targetAudienceId && targetAudience) {
       const [profile] = await tx
-        .insert(scrapeProfilesTable)
-        .values({ ...scrapeProfile, userId })
+        .insert(targetAudienceTable)
+        .values({ ...targetAudience, userId })
         .returning();
-      scrapeProfileId = profile.id;
-      scrapeProfileData = profile;
+      targetAudienceId = profile.id;
+      targetAudienceData = profile;
     }
 
-    if (!emailProfileId && emailProfile) {
+    if (!emailAccountId && emailAccount) {
       const [profile] = await tx
-        .insert(emailProfilesTable)
-        .values({ ...emailProfile, userId })
+        .insert(emailAccountTable)
+        .values({ ...emailAccount, userId })
         .returning();
-      emailProfileId = profile.id;
-      emailProfileData = profile;
+      emailAccountId = profile.id;
+      emailAccountData = profile;
     }
 
     if (!templateId && template) {
@@ -287,9 +310,9 @@ export async function updateCopilot(
     const [row] = await tx
       .update(copilotsTable)
       .set({
-        ...data,
-        scrapeProfileId,
-        emailProfileId,
+        ...copilotFields,
+        targetAudienceId,
+        emailAccountId,
         templateId,
         updatedAt: new Date(),
       })
@@ -299,22 +322,22 @@ export async function updateCopilot(
     if (!row)
       throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
 
-    if (scrapeProfileId && !scrapeProfileData) {
+    if (targetAudienceId && !targetAudienceData) {
       const [profile] = await tx
         .select()
-        .from(scrapeProfilesTable)
-        .where(eq(scrapeProfilesTable.id, scrapeProfileId));
+        .from(targetAudienceTable)
+        .where(eq(targetAudienceTable.id, targetAudienceId));
 
-      scrapeProfileData = profile;
+      targetAudienceData = profile;
     }
 
-    if (emailProfileId && !emailProfileData) {
+    if (emailAccountId && !emailAccountData) {
       const [profile] = await tx
         .select()
-        .from(emailProfilesTable)
-        .where(eq(emailProfilesTable.id, emailProfileId));
+        .from(emailAccountTable)
+        .where(eq(emailAccountTable.id, emailAccountId));
 
-      emailProfileData = profile;
+      emailAccountData = profile;
     }
 
     if (templateId && !templateData) {
@@ -328,13 +351,13 @@ export async function updateCopilot(
 
     return {
       ...row,
-      scrapeProfile: scrapeProfileData,
-      emailProfile: emailProfileData,
+      targetAudience: targetAudienceData,
+      emailAccount: emailAccountData,
       template: templateData,
     };
   });
 
-  res.json(updated);
+  res.json(withLegacyCopilotKeys(updated));
 }
 
 export async function deleteCopilot(
@@ -388,8 +411,8 @@ export async function duplicateCopilot(
       sendingHours: original.sendingHours,
       sendingHoursActive: original.sendingHoursActive,
       timezone: original.timezone,
-      emailProfileId: original.emailProfileId,
-      scrapeProfileId: original.scrapeProfileId,
+      emailAccountId: original.emailAccountId,
+      targetAudienceId: original.targetAudienceId,
       templateId: original.templateId,
       emailsSent: 0,
       emailsOpened: 0,
@@ -399,7 +422,7 @@ export async function duplicateCopilot(
 
   await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
 
-  res.status(201).json(created);
+  res.status(201).json(withLegacyCopilotKeys(created));
 }
 
 export async function updateCopilotStatus(
@@ -423,7 +446,7 @@ export async function updateCopilotStatus(
     await validateCopilotCanActivate(id);
   }
 
-  res.json(updated);
+  res.json(withLegacyCopilotKeys(updated));
 }
 
 export async function runCopilot(req: Request<{ id: string }>, res: Response) {

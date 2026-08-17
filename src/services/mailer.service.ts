@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import {
   emailTemplatesTable,
-  emailProfilesTable,
+  emailAccountTable,
   copilotsTable,
   copilotLeadsTable,
   leadsTable,
@@ -38,7 +38,7 @@ export interface SendResult {
 // ─── SMTP helpers ─────────────────────────────────────────────────────────
 
 /**
- * Gets SMTP config from the copilot's linked email profile.
+ * Gets SMTP config from the copilot's linked email account.
  */
 async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
   const [copilot] = await db
@@ -46,17 +46,17 @@ async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
     .from(copilotsTable)
     .where(eq(copilotsTable.id, copilotId));
 
-  if (!copilot || !copilot.emailProfileId) {
-    throw new Error("Copilot has no email profile configured.");
+  if (!copilot || !copilot.emailAccountId) {
+    throw new Error("Copilot has no email account configured.");
   }
 
   const [profile] = await db
     .select()
-    .from(emailProfilesTable)
-    .where(eq(emailProfilesTable.id, copilot.emailProfileId));
+    .from(emailAccountTable)
+    .where(eq(emailAccountTable.id, copilot.emailAccountId));
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw new Error("Email profile not properly configured.");
+    throw new Error("Email account not properly configured.");
   }
 
   return {

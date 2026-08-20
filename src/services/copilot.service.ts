@@ -7,6 +7,7 @@ import {
   emailAccountTable,
   emailTemplatesTable,
   scrapeJobsTable,
+  flightScheduleTable,
 } from "../db/schema";
 import { and, count, desc, eq, getTableColumns, ne } from "drizzle-orm";
 import { incrementUsage } from "../lib/helpers";
@@ -114,11 +115,13 @@ export async function listCopilots(req: Request, res: Response) {
       targetAudience: getTableColumns(targetAudienceTable),
       emailAccount: getTableColumns(emailAccountTable),
       template: getTableColumns(emailTemplatesTable),
+      flightSchedule: getTableColumns(flightScheduleTable),
     })
     .from(copilotsTable)
     .leftJoin(targetAudienceTable, eq(copilotsTable.targetAudienceId, targetAudienceTable.id))
     .leftJoin(emailAccountTable, eq(copilotsTable.emailAccountId, emailAccountTable.id))
     .leftJoin(emailTemplatesTable, eq(copilotsTable.templateId, emailTemplatesTable.id))
+    .leftJoin(flightScheduleTable, eq(copilotsTable.flightScheduleId, flightScheduleTable.id))
     .orderBy(desc(copilotsTable.createdAt))
     .where(eq(copilotsTable.userId, userId));
 
@@ -135,11 +138,13 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
       targetAudience: getTableColumns(targetAudienceTable),
       emailAccount: getTableColumns(emailAccountTable),
       template: getTableColumns(emailTemplatesTable),
+      flightSchedule: getTableColumns(flightScheduleTable),
     })
     .from(copilotsTable)
     .leftJoin(targetAudienceTable, eq(copilotsTable.targetAudienceId, targetAudienceTable.id))
     .leftJoin(emailAccountTable, eq(copilotsTable.emailAccountId, emailAccountTable.id))
     .leftJoin(emailTemplatesTable, eq(copilotsTable.templateId, emailTemplatesTable.id))
+    .leftJoin(flightScheduleTable, eq(copilotsTable.flightScheduleId, flightScheduleTable.id))
     .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!row)
@@ -168,6 +173,10 @@ export async function createCopilot(req: Request, res: Response) {
     const template = data.template ?? null;
     let templateData = null;
 
+    let flightScheduleId = data.flightScheduleId ?? null;
+    const flightSchedule = data.flightSchedule ?? null;
+    let flightScheduleData = null;
+
     if (!targetAudienceId && targetAudience) {
       const [profile] = await tx
         .insert(targetAudienceTable)
@@ -195,21 +204,25 @@ export async function createCopilot(req: Request, res: Response) {
       templateData = createdTemplate;
     }
 
+    if (!flightScheduleId) {
+      const [schedule] = await tx
+        .insert(flightScheduleTable)
+        .values({ ...(flightSchedule ?? {}), userId })
+        .returning();
+      flightScheduleId = schedule.id;
+      flightScheduleData = schedule;
+    }
+
     const [row] = await tx
       .insert(copilotsTable)
       .values({
         name: data.name,
         description: data.description,
-        sendLimit: data.sendLimit,
-        sendLimitActive: data.sendLimitActive,
-        activeDays: data.activeDays,
-        sendingHours: data.sendingHours,
-        sendingHoursActive: data.sendingHoursActive,
-        timezone: data.timezone,
         userId,
         targetAudienceId,
         emailAccountId,
         templateId,
+        flightScheduleId,
       })
       .returning();
 
@@ -242,11 +255,21 @@ export async function createCopilot(req: Request, res: Response) {
       templateData = createdTemplate;
     }
 
+    if (flightScheduleId && !flightScheduleData) {
+      const [schedule] = await tx
+        .select()
+        .from(flightScheduleTable)
+        .where(eq(flightScheduleTable.id, flightScheduleId));
+
+      flightScheduleData = schedule;
+    }
+
     return {
       ...row,
       targetAudience: targetAudienceData,
       emailAccount: emailAccountData,
       template: templateData,
+      flightSchedule: flightScheduleData,
     };
   });
 
@@ -264,6 +287,7 @@ export async function updateCopilot(
     targetAudience: nestedTargetAudience,
     emailAccount: nestedEmailAccount,
     template: nestedTemplate,
+    flightSchedule: nestedFlightSchedule,
     ...copilotFields
   } = data;
 
@@ -276,10 +300,14 @@ export async function updateCopilot(
   let templateId = data.templateId ?? null;
   const template = nestedTemplate ?? null;
 
+  let flightScheduleId: number | null | undefined = data.flightScheduleId;
+  const flightSchedule = nestedFlightSchedule ?? null;
+
   const updated = await db.transaction(async (tx) => {
     let emailAccountData = null;
     let targetAudienceData = null;
     let templateData = null;
+    let flightScheduleData = null;
     if (!targetAudienceId && targetAudience) {
       const [profile] = await tx
         .insert(targetAudienceTable)
@@ -307,6 +335,34 @@ export async function updateCopilot(
       templateData = createdTemplate;
     }
 
+    const [existing] = await tx
+      .select()
+      .from(copilotsTable)
+      .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
+
+    if (!existing)
+      throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+
+    flightScheduleId = flightScheduleId ?? existing.flightScheduleId ?? null;
+
+    if (flightSchedule) {
+      if (flightScheduleId) {
+        const [schedule] = await tx
+          .update(flightScheduleTable)
+          .set({ ...flightSchedule, updatedAt: new Date() })
+          .where(eq(flightScheduleTable.id, flightScheduleId))
+          .returning();
+        flightScheduleData = schedule;
+      } else {
+        const [schedule] = await tx
+          .insert(flightScheduleTable)
+          .values({ ...flightSchedule, userId })
+          .returning();
+        flightScheduleId = schedule.id;
+        flightScheduleData = schedule;
+      }
+    }
+
     const [row] = await tx
       .update(copilotsTable)
       .set({
@@ -314,6 +370,7 @@ export async function updateCopilot(
         targetAudienceId,
         emailAccountId,
         templateId,
+        flightScheduleId,
         updatedAt: new Date(),
       })
       .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)))
@@ -349,11 +406,21 @@ export async function updateCopilot(
       templateData = createdTemplate;
     }
 
+    if (flightScheduleId && !flightScheduleData) {
+      const [schedule] = await tx
+        .select()
+        .from(flightScheduleTable)
+        .where(eq(flightScheduleTable.id, flightScheduleId));
+
+      flightScheduleData = schedule;
+    }
+
     return {
       ...row,
       targetAudience: targetAudienceData,
       emailAccount: emailAccountData,
       template: templateData,
+      flightSchedule: flightScheduleData,
     };
   });
 
@@ -398,6 +465,31 @@ export async function duplicateCopilot(
       ? "Copy of " + original.name.substring(0, 140)
       : "Copy of " + original.name;
 
+  let flightScheduleId: number | null = null;
+  if (original.flightScheduleId) {
+    const [originalSchedule] = await db
+      .select()
+      .from(flightScheduleTable)
+      .where(eq(flightScheduleTable.id, original.flightScheduleId));
+
+    if (originalSchedule) {
+      const [copied] = await db
+        .insert(flightScheduleTable)
+        .values({
+          userId,
+          name: originalSchedule.name,
+          sendLimit: originalSchedule.sendLimit,
+          sendLimitActive: originalSchedule.sendLimitActive,
+          activeDays: originalSchedule.activeDays,
+          sendingHours: originalSchedule.sendingHours,
+          sendingHoursActive: originalSchedule.sendingHoursActive,
+          timezone: originalSchedule.timezone,
+        })
+        .returning();
+      flightScheduleId = copied.id;
+    }
+  }
+
   const [created] = await db
     .insert(copilotsTable)
     .values({
@@ -405,12 +497,7 @@ export async function duplicateCopilot(
       name: newName,
       description: original.description,
       status: "draft",
-      sendLimit: original.sendLimit,
-      sendLimitActive: original.sendLimitActive,
-      activeDays: original.activeDays,
-      sendingHours: original.sendingHours,
-      sendingHoursActive: original.sendingHoursActive,
-      timezone: original.timezone,
+      flightScheduleId,
       emailAccountId: original.emailAccountId,
       targetAudienceId: original.targetAudienceId,
       templateId: original.templateId,
@@ -509,9 +596,16 @@ export async function getCopilotStatus(
     });
   }
 
+  const [schedule] = copilot.flightScheduleId
+    ? await db
+        .select()
+        .from(flightScheduleTable)
+        .where(eq(flightScheduleTable.id, copilot.flightScheduleId))
+    : [];
+
   const [newLeadsCount, sentToday] = await Promise.all([
     getCopilotNewLeadCount(id),
-    getCopilotSentTodayCount(id, copilot.timezone),
+    getCopilotSentTodayCount(id, schedule?.timezone ?? "UTC"),
   ]);
 
   const emailStats = { sentToday };

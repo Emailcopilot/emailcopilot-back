@@ -15,6 +15,7 @@ import { billingRouter } from "./routes/billing";
 import { copilotsRouter } from "./routes/copilots";
 import { emailAccountsRouter } from "./routes/email-accounts";
 import { targetAudiencesRouter } from "./routes/target-audiences";
+import { flightSchedulesRouter } from "./routes/flight-schedules";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
@@ -83,6 +84,7 @@ app.use("/email-accounts", emailAccountsRouter);
 app.use("/email-profiles", deprecateLegacyRoute, emailAccountsRouter);
 app.use("/target-audiences", targetAudiencesRouter);
 app.use("/scrape-profiles", deprecateLegacyRoute, targetAudiencesRouter);
+app.use("/flight-schedules", flightSchedulesRouter);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 

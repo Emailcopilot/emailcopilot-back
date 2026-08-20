@@ -1,4 +1,4 @@
-import type { Copilot } from "../db/schema";
+import type { FlightSchedule } from "../db/schema";
 
 function parseHhmm(value: string): number {
   const [hours, minutes] = value.split(":").map(Number);
@@ -127,26 +127,26 @@ function isWithinHours(
 }
 
 export function isWithinSendWindow(
-  copilot: Pick<
-    Copilot,
+  schedule: Pick<
+    FlightSchedule,
     "activeDays" | "sendingHours" | "sendingHoursActive" | "timezone"
   >,
   now: Date = new Date(),
 ): boolean {
-  const parts = getZonedParts(now, copilot.timezone);
+  const parts = getZonedParts(now, schedule.timezone);
 
-  if (!copilot.activeDays.includes(parts.isoWeekday)) {
+  if (!schedule.activeDays.includes(parts.isoWeekday)) {
     return false;
   }
 
-  if (!copilot.sendingHoursActive) {
+  if (!schedule.sendingHoursActive) {
     return true;
   }
 
   return isWithinHours(
     parts.minutesSinceMidnight,
-    copilot.sendingHours.start,
-    copilot.sendingHours.end,
+    schedule.sendingHours.start,
+    schedule.sendingHours.end,
   );
 }
 

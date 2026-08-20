@@ -14,6 +14,7 @@ import {
   copilotsTable,
   subscriptionsTable,
   usageTable,
+  flightScheduleTable,
 } from "../src/db/schema";
 
 type TestUserConfig = {
@@ -250,6 +251,20 @@ async function ensureTestUser(config: TestUserConfig) {
     .limit(1);
 
   if (!copilot) {
+    const [schedule] = await db
+      .insert(flightScheduleTable)
+      .values({
+        userId: user.id,
+        name: copilotName,
+        sendLimit: 10,
+        sendLimitActive: true,
+        activeDays: [1, 2, 3, 4, 5],
+        sendingHours: { start: "09:00", end: "17:00" },
+        sendingHoursActive: false,
+        timezone: config.timezone,
+      })
+      .returning();
+
     [copilot] = await db
       .insert(copilotsTable)
       .values({
@@ -257,12 +272,7 @@ async function ensureTestUser(config: TestUserConfig) {
         name: copilotName,
         description: `Seeded copilot for ${config.email}`,
         status: "running",
-        sendLimit: 10,
-        sendLimitActive: true,
-        activeDays: [1, 2, 3, 4, 5],
-        sendingHours: { start: "09:00", end: "17:00" },
-        sendingHoursActive: false,
-        timezone: config.timezone,
+        flightScheduleId: schedule.id,
         emailAccountId: emailAccount!.id,
         targetAudienceId: targetAudience!.id,
         templateId: template!.id,
@@ -270,6 +280,13 @@ async function ensureTestUser(config: TestUserConfig) {
       .returning();
     console.log("✅ Created copilot", copilot.id);
   } else {
+    if (copilot.flightScheduleId) {
+      await db
+        .update(flightScheduleTable)
+        .set({ timezone: config.timezone, updatedAt: new Date() })
+        .where(eq(flightScheduleTable.id, copilot.flightScheduleId));
+    }
+
     [copilot] = await db
       .update(copilotsTable)
       .set({
@@ -277,7 +294,6 @@ async function ensureTestUser(config: TestUserConfig) {
         targetAudienceId: targetAudience!.id,
         templateId: template!.id,
         status: "active",
-        timezone: config.timezone,
         updatedAt: new Date(),
       })
       .where(eq(copilotsTable.id, copilot.id))

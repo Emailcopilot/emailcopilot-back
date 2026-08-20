@@ -5,8 +5,9 @@ import {
   scrapeJobsTable,
   subscriptionsTable,
   usageTable,
+  flightScheduleTable,
 } from "../db/schema";
-import type { Copilot } from "../db/schema";
+import type { Copilot, FlightSchedule } from "../db/schema";
 import { and, asc, count, desc, eq, gte, lte, lt } from "drizzle-orm";
 import { getPlan, isSubscriptionUsable } from "../lib/billing";
 import {
@@ -112,21 +113,33 @@ export async function getCopilotNewLeadCount(
   );
 }
 
+async function getFlightScheduleForCopilot(
+  copilot: Copilot,
+): Promise<FlightSchedule | null> {
+  if (!copilot.flightScheduleId) return null;
+  const [schedule] = await db
+    .select()
+    .from(flightScheduleTable)
+    .where(eq(flightScheduleTable.id, copilot.flightScheduleId));
+  return schedule ?? null;
+}
+
 export async function getCopilotProgress(
   copilot: Copilot,
   subscription: SubscriptionInfo,
 ): Promise<CopilotProgress> {
+  const schedule = await getFlightScheduleForCopilot(copilot);
   const sentTodayCount = await getCopilotSentTodayCount(
     copilot.id,
-    copilot.timezone,
+    schedule?.timezone ?? "UTC",
   );
   const newLeadCount = await getCopilotNewLeadCount(copilot.id);
   // Daily cap only when toggle is on and a positive limit is set
   const dailySendLimit =
-    copilot.sendLimitActive && copilot.sendLimit != null
-      ? copilot.sendLimit
+    schedule?.sendLimitActive && schedule.sendLimit != null
+      ? schedule.sendLimit
       : null;
-  const withinSendWindow = isWithinSendWindow(copilot);
+  const withinSendWindow = schedule ? isWithinSendWindow(schedule) : true;
 
   // null dailySendLimit = no daily cap; budget is subscription remaining only
   const remainingToday =

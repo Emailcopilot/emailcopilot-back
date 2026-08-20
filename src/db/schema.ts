@@ -217,15 +217,14 @@ export const copilotLeadsTable = pgTable("copilot_leads", {
   errorMessage: text(),
 });
 
-// ─── Copilots ─────────────────────────────────────────────────────────────────
+// ─── Flight Schedule ──────────────────────────────────────────────────────────
 
-export const copilotsTable = pgTable("copilots", {
+export const flightScheduleTable = pgTable("flight_schedule", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
-  name: varchar("name", { length: 150 }).notNull(),
-  description: text("description"),
+  name: varchar("name", { length: 150 }).notNull().default("Default"),
   sendLimit: integer("send_limit"),
   sendLimitActive: boolean("send_limit_active").notNull().default(false),
   activeDays: jsonb("active_days")
@@ -238,7 +237,26 @@ export const copilotsTable = pgTable("copilots", {
     .default({ start: "09:00", end: "17:00" }),
   sendingHoursActive: boolean("sending_hours_active").notNull().default(false),
   timezone: varchar("timezone", { length: 100 }).notNull().default("UTC"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Copilots ─────────────────────────────────────────────────────────────────
+
+export const copilotsTable = pgTable("copilots", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 150 }).notNull(),
+  description: text("description"),
   status: copilotStatusEnum("status").notNull().default("draft"),
+  flightScheduleId: integer("flight_schedule_id").references(
+    () => flightScheduleTable.id,
+    {
+      onDelete: "set null",
+    },
+  ),
   emailAccountId: integer("email_account_id").references(
     () => emailAccountTable.id,
     {
@@ -344,6 +362,9 @@ export type NewLead = typeof leadsTable.$inferInsert;
 
 export type CopilotLead = typeof copilotLeadsTable.$inferSelect;
 export type NewCopilotLead = typeof copilotLeadsTable.$inferInsert;
+
+export type FlightSchedule = typeof flightScheduleTable.$inferSelect;
+export type NewFlightSchedule = typeof flightScheduleTable.$inferInsert;
 
 export type Copilot = typeof copilotsTable.$inferSelect;
 export type NewCopilot = typeof copilotsTable.$inferInsert;

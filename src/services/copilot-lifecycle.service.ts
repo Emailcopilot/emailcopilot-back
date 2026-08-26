@@ -2,13 +2,14 @@ import { db } from "../db/drizzle";
 import {
   copilotsTable,
   copilotLeadsTable,
+  leadsTable,
   scrapeJobsTable,
   subscriptionsTable,
   usageTable,
   flightScheduleTable,
 } from "../db/schema";
 import type { Copilot, FlightSchedule } from "../db/schema";
-import { and, asc, count, desc, eq, gte, lte, lt } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, lt, lte, ne } from "drizzle-orm";
 import { getPlan, isSubscriptionUsable } from "../lib/billing";
 import {
   getCopilotDayBounds,
@@ -111,6 +112,26 @@ export async function getCopilotNewLeadCount(
       eq(copilotLeadsTable.status, "new"),
     ),
   );
+}
+
+/** Leads the mailer can actually send (status new + non-empty email). */
+export async function getCopilotPendingSendCount(
+  copilotId: number,
+): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(copilotLeadsTable)
+    .innerJoin(leadsTable, eq(copilotLeadsTable.leadId, leadsTable.id))
+    .where(
+      and(
+        eq(copilotLeadsTable.copilotId, copilotId),
+        eq(copilotLeadsTable.status, "new"),
+        isNotNull(leadsTable.email),
+        ne(leadsTable.email, ""),
+      ),
+    );
+
+  return row?.value ?? 0;
 }
 
 async function getFlightScheduleForCopilot(

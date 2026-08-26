@@ -13,6 +13,7 @@ import BrowserManager from "./browserManager";
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
   getActiveSubscription,
+  getCopilotPendingSendCount,
   getCopilotProgress,
   pauseCopilot,
   setCopilotActive,
@@ -24,6 +25,8 @@ import { OUTSIDE_SEND_WINDOW_MSG } from "../lib/send-window";
 
 const MAX_SCRAPE_FAILURES = 3;
 const scrapeFailureCounts = new Map<number, number>();
+const NO_NEW_LISTINGS_SENDING_MSG =
+  "No new listings — sending remaining leads";
 
 const stopScrapeJob = async ({
   scrapeJobId,
@@ -183,6 +186,14 @@ async function processCopilot(browser: Browser, copilot: Copilot) {
   }
 
   if (progress.scrapeNeeded > 0) {
+    if (copilot.lastError === NO_NEW_LISTINGS_SENDING_MSG) {
+      const pending = await getCopilotPendingSendCount(copilot.id);
+      if (pending === 0) {
+        await completeCopilot(copilot.id);
+      }
+      return;
+    }
+
     await launchScrapeJob(copilot);
     await runScrapeJob(browser, copilot);
   }
@@ -475,7 +486,23 @@ async function runScrapeJob(
       status: "done",
       errorMessage: "No listings found",
     });
-    await completeCopilot(copilotId);
+
+    const pending = await getCopilotPendingSendCount(copilotId);
+    if (pending === 0) {
+      await completeCopilot(copilotId);
+      return;
+    }
+
+    await db
+      .update(copilotsTable)
+      .set({
+        lastError: NO_NEW_LISTINGS_SENDING_MSG,
+        updatedAt: new Date(),
+      })
+      .where(eq(copilotsTable.id, copilotId));
+    console.log(
+      `📬 Copilot ${copilotId}: no new listings, ${pending} lead(s) still queued to send`,
+    );
     return;
   }
 

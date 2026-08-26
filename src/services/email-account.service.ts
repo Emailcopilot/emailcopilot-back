@@ -3,12 +3,45 @@ import { db } from "../db/drizzle";
 import { emailAccountTable, subscriptionsTable } from "../db/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import { testSmtpConnection, type SendResult } from "./mailer.service";
+import {
+  testImapConnection,
+  testMailTransport,
+} from "./email-transport.service";
 import { incrementUsage } from "../lib/helpers";
 import { getPlanLimits, isSubscriptionUsable } from "../lib/billing";
 import type {
   CreateEmailAccountInput,
   UpdateEmailAccountInput,
 } from "../validators/email-account.validator";
+import {
+  encryptSecret,
+  PROVIDER_PRESETS,
+  sanitizeEmailAccount,
+} from "../lib/email-secrets";
+
+export type ChannelVerifyResult = {
+  success: boolean;
+  error?: string;
+  skipped?: boolean;
+};
+
+export type VerifyEmailAccountResult = {
+  success: boolean;
+  smtp: ChannelVerifyResult;
+  imap: ChannelVerifyResult;
+  smtpStatus: string;
+  imapStatus: string;
+};
+
+function hasImapConfigured(
+  account: typeof emailAccountTable.$inferSelect,
+): boolean {
+  return (
+    account.provider === "gmail" ||
+    account.provider === "outlook" ||
+    Boolean(account.imapHost)
+  );
+}
 
 export async function listEmailAccounts(req: Request, res: Response) {
   const userId = req.dbUser!.id;
@@ -16,7 +49,7 @@ export async function listEmailAccounts(req: Request, res: Response) {
     .select()
     .from(emailAccountTable)
     .where(eq(emailAccountTable.userId, userId));
-  res.json(rows);
+  res.json(rows.map(sanitizeEmailAccount));
 }
 
 export async function getEmailAccount(
@@ -29,12 +62,14 @@ export async function getEmailAccount(
   const [row] = await db
     .select()
     .from(emailAccountTable)
-    .where(and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)));
+    .where(
+      and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
+    );
   if (!row)
     throw Object.assign(new Error("Email account not found"), {
       statusCode: 404,
     });
-  res.json(row);
+  res.json(sanitizeEmailAccount(row));
 }
 
 async function getUsableSubscription(userId: number) {
@@ -75,19 +110,76 @@ async function assertEmailAccountWithinPlanLimit(
   }
 }
 
+function prepareAccountWrite(
+  data: CreateEmailAccountInput | UpdateEmailAccountInput,
+) {
+  const {
+    dailyLimit: _dailyLimit,
+    smtpPass,
+    imapPass,
+    provider,
+    ...rest
+  } = data as CreateEmailAccountInput & UpdateEmailAccountInput;
+
+  const patch: Record<string, unknown> = { ...rest };
+
+  if (smtpPass !== undefined) {
+    patch.smtpPass = smtpPass;
+  }
+  if (imapPass !== undefined) {
+    patch.imapPass = encryptSecret(imapPass);
+  }
+
+  if (provider === "gmail" || provider === "outlook") {
+    const preset = PROVIDER_PRESETS[provider];
+    if (patch.smtpHost === undefined) patch.smtpHost = preset.smtpHost;
+    if (patch.smtpPort === undefined) patch.smtpPort = preset.smtpPort;
+    if (patch.imapHost === undefined) patch.imapHost = preset.imapHost;
+    if (patch.imapPort === undefined) patch.imapPort = preset.imapPort;
+  }
+
+  return patch;
+}
+
 export async function createEmailAccount(req: Request, res: Response) {
   const userId = req.dbUser!.id;
   const data = req.body as CreateEmailAccountInput;
 
+  if (data.provider === "smtp" && (!data.smtpHost || !data.smtpPass)) {
+    throw Object.assign(
+      new Error("smtpHost and smtpPass are required for SMTP accounts"),
+      { statusCode: 400 },
+    );
+  }
+
+  if (data.provider === "gmail" || data.provider === "outlook") {
+    throw Object.assign(
+      new Error(
+        `Use GET /email-accounts/oauth/${data.provider}/start to connect ${data.provider}`,
+      ),
+      { statusCode: 400 },
+    );
+  }
+
   const sub = await getUsableSubscription(userId);
   await assertEmailAccountWithinPlanLimit(userId, sub.planId);
 
+  const values = prepareAccountWrite(data);
+  const imapConfigured = Boolean(
+    (values as { imapHost?: string }).imapHost || data.imapHost,
+  );
+
   const [created] = await db
     .insert(emailAccountTable)
-    .values({ ...data, userId })
+    .values({
+      ...values,
+      userId,
+      smtpStatus: "inactive",
+      imapStatus: imapConfigured ? "inactive" : "disabled",
+    } as typeof emailAccountTable.$inferInsert)
     .returning();
   await incrementUsage(userId, sub.id, { emailAccountsCreated: 1 });
-  res.status(201).json(created);
+  res.status(201).json(sanitizeEmailAccount(created));
 }
 
 export async function updateEmailAccount(
@@ -98,16 +190,24 @@ export async function updateEmailAccount(
   const userId = req.dbUser!.id;
   const data = req.body as UpdateEmailAccountInput;
 
+  const values = prepareAccountWrite(data);
+
+  if (data.imapHost !== undefined) {
+    values.imapStatus = data.imapHost ? "inactive" : "disabled";
+  }
+
   const [updated] = await db
     .update(emailAccountTable)
-    .set({ ...data, updatedAt: new Date() })
-    .where(and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)))
+    .set({ ...values, updatedAt: new Date() })
+    .where(
+      and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
+    )
     .returning();
   if (!updated)
     throw Object.assign(new Error("Email account not found"), {
       statusCode: 404,
     });
-  res.json(updated);
+  res.json(sanitizeEmailAccount(updated));
 }
 
 export async function deleteEmailAccount(
@@ -119,58 +219,94 @@ export async function deleteEmailAccount(
 
   await db
     .delete(emailAccountTable)
-    .where(and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)));
+    .where(
+      and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
+    );
   res.status(204).send();
 }
 
-/** Verifies the SMTP config stored in the given account (not global settings). */
+function isAccountConfigured(account: typeof emailAccountTable.$inferSelect) {
+  if (account.provider === "gmail" || account.provider === "outlook") {
+    return Boolean(account.oauthRefreshToken || account.oauthAccessToken);
+  }
+  return Boolean(account.smtpHost && account.email && account.smtpPass);
+}
+
+/** Verifies SMTP and IMAP independently; updates smtpStatus / imapStatus. */
 async function verifyEmailAccountForUser(
   id: number,
   userId: number,
-): Promise<SendResult> {
+): Promise<VerifyEmailAccountResult> {
   const [account] = await db
     .select()
     .from(emailAccountTable)
-    .where(and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)));
+    .where(
+      and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
+    );
   if (!account)
     throw Object.assign(new Error("Email account not found"), {
       statusCode: 404,
     });
 
-  if (!account.smtpHost || !account.email || !account.smtpPass) {
+  if (!isAccountConfigured(account)) {
     throw Object.assign(
       new Error(
-        "SMTP configuration incomplete. smtpHost, email, and smtpPass are required.",
+        account.provider === "smtp"
+          ? "SMTP configuration incomplete. smtpHost, email, and smtpPass are required."
+          : "OAuth tokens missing. Reconnect the account via OAuth.",
       ),
       { statusCode: 400 },
     );
   }
 
-  const result = await testSmtpConnection({
-    host: account.smtpHost,
-    port: account.smtpPort ?? 587,
-    email: account.email,
-    pass: account.smtpPass,
-    sendName: account.sendName ?? account.email,
-  });
+  const smtpResult = await testMailTransport(account);
+  const smtpStatus = smtpResult.success ? "active" : "error";
 
-  if (result.success) {
-    await db
-      .update(emailAccountTable)
-      .set({
-        status: "active",
-        lastVerifiedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)));
+  let imapResult: ChannelVerifyResult;
+  let imapStatus: "active" | "error" | "disabled" | "inactive";
+
+  if (!hasImapConfigured(account)) {
+    imapResult = { success: true, skipped: true };
+    imapStatus = "disabled";
   } else {
-    await db
-      .update(emailAccountTable)
-      .set({ status: "error", updatedAt: new Date() })
-      .where(and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)));
+    const imap = await testImapConnection(account);
+    imapResult = {
+      success: imap.success,
+      error: imap.error,
+    };
+    imapStatus = imap.success ? "active" : "error";
   }
 
-  return result;
+  const now = new Date();
+  const [updated] = await db
+    .update(emailAccountTable)
+    .set({
+      smtpStatus,
+      imapStatus,
+      lastSmtpError: smtpResult.success
+        ? null
+        : (smtpResult.error ?? "SMTP verify failed"),
+      lastImapError:
+        imapStatus === "disabled"
+          ? null
+          : imapResult.success
+            ? null
+            : (imapResult.error ?? "IMAP verify failed"),
+      lastVerifiedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
+    )
+    .returning();
+
+  return {
+    success: smtpResult.success && (imapResult.skipped || imapResult.success),
+    smtp: smtpResult,
+    imap: imapResult,
+    smtpStatus: updated?.smtpStatus ?? smtpStatus,
+    imapStatus: updated?.imapStatus ?? imapStatus,
+  };
 }
 
 export async function verifyEmailAccount(
@@ -185,4 +321,5 @@ export async function verifyEmailAccount(
 }
 
 /** @internal Used by scripts/tests — not an HTTP handler. */
-export { verifyEmailAccountForUser };
+export { verifyEmailAccountForUser, testSmtpConnection };
+export type { SendResult };

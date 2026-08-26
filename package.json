@@ -12,7 +12,8 @@
     "db:seed": "ts-node src/db/seed.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db": "pnpm db:generate && pnpm db:migrate"
+    "db": "pnpm db:generate && pnpm db:migrate",
+    "test:oauth-accounts": "tsx scripts/test-oauth-accounts.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -26,6 +27,7 @@
     "dotenv": "^16.4.1",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "imapflow": "^1.7.1",
     "morgan": "^1.11.0",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.9",

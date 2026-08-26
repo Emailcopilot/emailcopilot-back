@@ -25,6 +25,58 @@ import {
   normalizeCopilotInput,
   withLegacyCopilotKeys,
 } from "../lib/api-aliases";
+import {
+  encryptSecret,
+  PROVIDER_PRESETS,
+  sanitizeEmailAccount,
+} from "../lib/email-secrets";
+
+function prepareNestedEmailAccount(
+  emailAccount: NonNullable<CreateCopilotInput["emailAccount"]>,
+  userId: number,
+) {
+  if (emailAccount.provider === "gmail" || emailAccount.provider === "outlook") {
+    throw Object.assign(
+      new Error(
+        `Connect ${emailAccount.provider} via GET /email-accounts/oauth/${emailAccount.provider}/start`,
+      ),
+      { statusCode: 400 },
+    );
+  }
+
+  const preset =
+    emailAccount.provider === "smtp"
+      ? null
+      : PROVIDER_PRESETS[emailAccount.provider as "gmail" | "outlook"];
+
+  return {
+    profileName: emailAccount.profileName,
+    email: emailAccount.email,
+    sendName: emailAccount.sendName,
+    provider: emailAccount.provider,
+    smtpHost: emailAccount.smtpHost ?? preset?.smtpHost,
+    smtpPort: emailAccount.smtpPort ?? preset?.smtpPort ?? 587,
+    smtpPass: emailAccount.smtpPass,
+    imapHost: emailAccount.imapHost ?? preset?.imapHost,
+    imapPort: emailAccount.imapPort ?? preset?.imapPort ?? 993,
+    imapPass: encryptSecret(emailAccount.imapPass),
+    smtpStatus: "inactive" as const,
+    imapStatus: (emailAccount.imapHost ?? preset?.imapHost
+      ? "inactive"
+      : "disabled") as "inactive" | "disabled",
+    userId,
+  };
+}
+
+function sanitizeCopilotRow<T extends { emailAccount?: unknown }>(row: T) {
+  if (!row.emailAccount) return withLegacyCopilotKeys(row);
+  return withLegacyCopilotKeys({
+    ...row,
+    emailAccount: sanitizeEmailAccount(
+      row.emailAccount as Parameters<typeof sanitizeEmailAccount>[0],
+    ),
+  });
+}
 
 async function getActiveSubscription(userId: number) {
   const subs = await db
@@ -99,10 +151,32 @@ async function validateCopilotCanActivate(copilotId: number) {
     .from(emailAccountTable)
     .where(eq(emailAccountTable.id, copilot.emailAccountId));
 
-  if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
+  if (!profile || !profile.email) {
     throw Object.assign(new Error("Email account is not properly configured"), {
       statusCode: 400,
     });
+  }
+
+  const isOauth =
+    profile.provider === "gmail" || profile.provider === "outlook";
+  if (isOauth) {
+    if (!profile.oauthRefreshToken && !profile.oauthAccessToken) {
+      throw Object.assign(
+        new Error("Email account OAuth tokens are missing — reconnect the account"),
+        { statusCode: 400 },
+      );
+    }
+  } else if (!profile.smtpHost || !profile.smtpPass) {
+    throw Object.assign(new Error("Email account is not properly configured"), {
+      statusCode: 400,
+    });
+  }
+
+  if (profile.smtpStatus === "error") {
+    throw Object.assign(
+      new Error("Email account SMTP is in error state — verify or reconnect"),
+      { statusCode: 400 },
+    );
   }
 }
 
@@ -125,7 +199,7 @@ export async function listCopilots(req: Request, res: Response) {
     .orderBy(desc(copilotsTable.createdAt))
     .where(eq(copilotsTable.userId, userId));
 
-  res.json(rows.map(withLegacyCopilotKeys));
+  res.json(rows.map(sanitizeCopilotRow));
 }
 
 export async function getCopilot(req: Request<{ id: string }>, res: Response) {
@@ -150,7 +224,7 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
   if (!row)
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
 
-  res.json(withLegacyCopilotKeys(row));
+  res.json(sanitizeCopilotRow(row));
 }
 
 export async function createCopilot(req: Request, res: Response) {
@@ -189,7 +263,7 @@ export async function createCopilot(req: Request, res: Response) {
     if (!emailAccountId && emailAccount) {
       const [profile] = await tx
         .insert(emailAccountTable)
-        .values({ ...emailAccount, userId })
+        .values(prepareNestedEmailAccount(emailAccount, userId))
         .returning();
       emailAccountId = profile.id;
       emailAccountData = profile;
@@ -273,7 +347,7 @@ export async function createCopilot(req: Request, res: Response) {
     };
   });
 
-  res.status(201).json(withLegacyCopilotKeys(created));
+  res.status(201).json(sanitizeCopilotRow(created));
 }
 
 export async function updateCopilot(
@@ -320,7 +394,7 @@ export async function updateCopilot(
     if (!emailAccountId && emailAccount) {
       const [profile] = await tx
         .insert(emailAccountTable)
-        .values({ ...emailAccount, userId })
+        .values(prepareNestedEmailAccount(emailAccount, userId))
         .returning();
       emailAccountId = profile.id;
       emailAccountData = profile;
@@ -424,7 +498,7 @@ export async function updateCopilot(
     };
   });
 
-  res.json(withLegacyCopilotKeys(updated));
+  res.json(sanitizeCopilotRow(updated));
 }
 
 export async function deleteCopilot(

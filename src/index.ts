@@ -13,13 +13,14 @@ import { scrapeJobsRouter } from "./routes/scrape-jobs";
 import { templatesRouter } from "./routes/templates";
 import { billingRouter } from "./routes/billing";
 import { copilotsRouter } from "./routes/copilots";
-import { emailAccountsRouter } from "./routes/email-accounts";
+import { emailAccountsRouter, emailOAuthCallbackRouter } from "./routes/email-accounts";
 import { targetAudiencesRouter } from "./routes/target-audiences";
 import { flightSchedulesRouter } from "./routes/flight-schedules";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
 import { periodicSendScheduler } from "./services/mailer.service";
+import { periodicImapPoller } from "./services/imap-poller.service";
 import runScraping from "./scraping";
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
@@ -60,6 +61,9 @@ app.get("/health", (_req, res) => {
 // without auth, and /billing/plans is public. Auth is handled inside the router
 // per-route via getAuth(), so we mount it without requireAuth here.
 app.use("/billing", billingRouter);
+
+// OAuth provider redirects here without a Clerk session cookie
+app.use("/email-accounts/oauth", emailOAuthCallbackRouter);
 
 // ─── Authenticated routes ────────────────────────────────────────────────────
 // requireAuth resolves the Clerk session to req.dbUser for all routes below
@@ -109,6 +113,7 @@ app.listen(PORT, async () => {
 
   runScraping(browserManager);
   periodicSendScheduler();
+  periodicImapPoller();
 
   process.on("SIGINT", async () => {
     await browserManager.closeBrowser();

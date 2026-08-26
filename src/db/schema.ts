@@ -9,6 +9,8 @@ import {
   pgEnum,
   jsonb,
   primaryKey,
+  index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import * as d from "drizzle-orm/pg-core";
 
@@ -31,6 +33,7 @@ export const emailAccountStatusEnum = pgEnum("email_account_status", [
   "active",
   "inactive",
   "error",
+  "disabled",
 ]);
 
 export const scrapeStatusEnum = pgEnum("scrape_status", [
@@ -111,8 +114,24 @@ export const emailAccountTable = pgTable(
     provider: emailProviderEnum("provider").notNull().default("smtp"),
     smtpHost: varchar("smtp_host", { length: 255 }),
     smtpPort: integer("smtp_port").default(587),
-    smtpPass: text("smtp_pass"), // store encrypted in practice
-    status: emailAccountStatusEnum("status").notNull().default("inactive"),
+    smtpPass: text("smtp_pass"),
+    imapHost: varchar("imap_host", { length: 255 }),
+    imapPort: integer("imap_port").default(993),
+    imapPass: text("imap_pass"),
+    imapLastUid: integer("imap_last_uid"),
+    imapLastSyncedAt: timestamp("imap_last_synced_at"),
+    oauthAccessToken: text("oauth_access_token"),
+    oauthRefreshToken: text("oauth_refresh_token"),
+    oauthExpiresAt: timestamp("oauth_expires_at"),
+    oauthScopes: text("oauth_scopes"),
+    smtpStatus: emailAccountStatusEnum("smtp_status")
+      .notNull()
+      .default("inactive"),
+    imapStatus: emailAccountStatusEnum("imap_status")
+      .notNull()
+      .default("inactive"),
+    lastSmtpError: text("last_smtp_error"),
+    lastImapError: text("last_imap_error"),
     sentToday: integer("sent_today").notNull().default(0),
     lastVerifiedAt: timestamp("last_verified_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -205,6 +224,8 @@ export const copilotLeadStatusEnum = pgEnum("copilot_lead_status_enum", [
   "new",
   "sent",
   "failed",
+  "bounced",
+  "replied",
 ]);
 
 export const copilotLeadsTable = pgTable("copilot_leads", {
@@ -212,10 +233,21 @@ export const copilotLeadsTable = pgTable("copilot_leads", {
   copilotId: integer().references(() => copilotsTable.id),
   leadId: integer().references(() => leadsTable.id),
   status: copilotLeadStatusEnum().notNull().default("new"),
+  currentStep: integer("current_step").notNull().default(0),
   sentAt: timestamp(),
   failedAt: timestamp(),
+  repliedAt: timestamp("replied_at"),
+  bouncedAt: timestamp("bounced_at"),
   errorMessage: text(),
 });
+
+export const sentEmailStatusEnum = pgEnum("sent_email_status_enum", [
+  "pending",
+  "sent",
+  "failed",
+  "bounced",
+  "replied",
+]);
 
 // ─── Flight Schedule ──────────────────────────────────────────────────────────
 
@@ -283,6 +315,59 @@ export const copilotsTable = pgTable("copilots", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─── Sent Emails ──────────────────────────────────────────────────────────────
+// One row per outbound message (initial outreach + follow-ups).
+
+export const sentEmailsTable = pgTable(
+  "sent_emails",
+  {
+    id: serial("id").primaryKey(),
+    copilotId: integer("copilot_id").references(() => copilotsTable.id, {
+      onDelete: "set null",
+    }),
+    copilotLeadId: integer("copilot_lead_id").references(
+      () => copilotLeadsTable.id,
+      { onDelete: "set null" },
+    ),
+    leadId: integer("lead_id").references(() => leadsTable.id, {
+      onDelete: "set null",
+    }),
+    emailAccountId: integer("email_account_id").references(
+      () => emailAccountTable.id,
+      { onDelete: "set null" },
+    ),
+    templateId: integer("template_id").references(() => emailTemplatesTable.id, {
+      onDelete: "set null",
+    }),
+    sequenceStep: integer("sequence_step").notNull().default(0),
+    toEmail: varchar("to_email", { length: 255 }).notNull(),
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    messageId: varchar("message_id", { length: 998 }),
+    inReplyTo: varchar("in_reply_to", { length: 998 }),
+    status: sentEmailStatusEnum("status").notNull().default("pending"),
+    sentAt: timestamp("sent_at"),
+    failedAt: timestamp("failed_at"),
+    bouncedAt: timestamp("bounced_at"),
+    repliedAt: timestamp("replied_at"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sent_emails_message_id_uidx").on(table.messageId),
+    index("sent_emails_copilot_lead_step_idx").on(
+      table.copilotLeadId,
+      table.sequenceStep,
+    ),
+    index("sent_emails_account_sent_at_idx").on(
+      table.emailAccountId,
+      table.sentAt,
+    ),
+    index("sent_emails_status_sent_at_idx").on(table.status, table.sentAt),
+  ],
+);
 
 // ─── Billing / Subscriptions ──────────────────────────────────────────────────
 
@@ -362,6 +447,9 @@ export type NewLead = typeof leadsTable.$inferInsert;
 
 export type CopilotLead = typeof copilotLeadsTable.$inferSelect;
 export type NewCopilotLead = typeof copilotLeadsTable.$inferInsert;
+
+export type SentEmail = typeof sentEmailsTable.$inferSelect;
+export type NewSentEmail = typeof sentEmailsTable.$inferInsert;
 
 export type FlightSchedule = typeof flightScheduleTable.$inferSelect;
 export type NewFlightSchedule = typeof flightScheduleTable.$inferInsert;

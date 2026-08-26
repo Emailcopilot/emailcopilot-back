@@ -5,9 +5,22 @@ import {
   updateEmailAccountSchema,
 } from "../validators/email-account.validator";
 import * as emailAccountService from "../services/email-account.service";
+import * as emailOauthService from "../services/email-oauth.service";
 
 export const emailAccountsRouter: Router = Router();
 export const emailProfilesRouter = emailAccountsRouter;
+
+/** Public OAuth callbacks (no Clerk session) — mount separately in index.ts */
+export const emailOAuthCallbackRouter: Router = Router();
+emailOAuthCallbackRouter.get(
+  "/:provider/callback",
+  emailOauthService.handleOAuthCallback,
+);
+
+emailAccountsRouter.get(
+  "/oauth/:provider/start",
+  emailOauthService.startOAuth,
+);
 
 emailAccountsRouter.get("/", emailAccountService.listEmailAccounts);
 

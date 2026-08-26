@@ -5,6 +5,7 @@ import {
   copilotsTable,
   copilotLeadsTable,
   leadsTable,
+  sentEmailsTable,
 } from "../db/schema";
 import { eq, and, sql, asc, isNotNull, ne } from "drizzle-orm";
 import type { EmailTemplate } from "../db/types";
@@ -20,8 +21,11 @@ import {
   syncCopilotsDailyStatus,
 } from "./copilot-lifecycle.service";
 import { OUTSIDE_SEND_WINDOW_MSG } from "../lib/send-window";
+import { resolveMailTransport, testMailTransport } from "./email-transport.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/** @deprecated Prefer testMailTransport with a full account; kept for scripts. */
 interface SmtpConfig {
   host: string;
   port: number;
@@ -33,14 +37,12 @@ interface SmtpConfig {
 export interface SendResult {
   success: boolean;
   error?: string;
+  messageId?: string;
 }
 
-// ─── SMTP helpers ─────────────────────────────────────────────────────────
+// ─── Config helpers ───────────────────────────────────────────────────────────
 
-/**
- * Gets SMTP config from the copilot's linked email account.
- */
-async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
+async function getCopilotEmailAccount(copilotId: number) {
   const [copilot] = await db
     .select()
     .from(copilotsTable)
@@ -50,27 +52,18 @@ async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
     throw new Error("Copilot has no email account configured.");
   }
 
-  const [profile] = await db
+  const [account] = await db
     .select()
     .from(emailAccountTable)
     .where(eq(emailAccountTable.id, copilot.emailAccountId));
 
-  if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw new Error("Email account not properly configured.");
+  if (!account) {
+    throw new Error("Email account not found.");
   }
 
-  return {
-    host: profile.smtpHost,
-    port: profile.smtpPort ?? 587,
-    email: profile.email,
-    pass: profile.smtpPass,
-    sendName: profile.sendName ?? profile.email,
-  };
+  return { copilot, account };
 }
 
-/**
- * Gets the template linked to the copilot.
- */
 async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
   const [copilot] = await db
     .select()
@@ -93,36 +86,8 @@ async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
   return template;
 }
 
-// ─── SMTP helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Creates a Nodemailer transporter instance configured with SMTP settings.
- *
- * @param config - SMTP configuration object containing connection details
- * @param config.host - The SMTP server hostname
- * @param config.port - The SMTP server port number
- * @param config.email - The SMTP authentication email (typically an email address)
- * @param config.pass - The SMTP authentication password
- * @returns A configured Transporter instance ready to send emails
- *
- * @example
- * const transporter = createTransporter({
- *   host: 'smtp.gmail.com',
- *   port: 587,
- *   email: 'your-email@gmail.com',
- *   pass: 'your-app-password'
- * });
- */
-function createTransporter(config: SmtpConfig) {
-  return nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.port === 465,
-    auth: { user: config.email, pass: config.pass },
-  });
-}
-
 type LeadLike = {
+  id?: number;
   companyName: string | null;
   email: string | null;
   website: string | null;
@@ -142,11 +107,17 @@ const MIN_SEND_INTERVAL_MS = 2 * 60 * 1000;
 const MAX_SEND_INTERVAL_MS = 5 * 60 * 1000;
 const IDLE_POLL_MS = 30 * 1000;
 
-// ─── SMTP test ────────────────────────────────────────────────────────────────
+// ─── SMTP test (legacy / scripts) ─────────────────────────────────────────────
 
-/**
- * Tests an SMTP connection with an explicit config.
- */
+function createTransporter(config: SmtpConfig) {
+  return nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.port === 465,
+    auth: { user: config.email, pass: config.pass },
+  });
+}
+
 export async function testSmtpConnection(
   config: SmtpConfig,
 ): Promise<SendResult> {
@@ -162,77 +133,119 @@ export async function testSmtpConnection(
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+export { testMailTransport };
+
 const randomBetween = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
-// ─── Periodic send ────────────────────────────────────────────────────────────
+// ─── Send ─────────────────────────────────────────────────────────────────────
 
 async function sendCopilotLead(
   copilotId: number,
   copilotLeadId: number,
   lead: LeadLike,
   template: EmailTemplate,
+  sequenceStep = 0,
 ): Promise<SendResult> {
-  try {
-    const config = await getCopilotSmtpConfig(copilotId);
-    const transporter = createTransporter(config);
-    const subject = interpolate(template.subject ?? "", lead, config.sendName);
-    const body = interpolate(template.body ?? "", lead, config.sendName);
+  const toEmail = lead.email as string;
+  let subject = "";
+  let body = "";
+  let emailAccountId: number | null = null;
 
-    await transporter.sendMail({
-      from: `"${config.sendName}" <${config.email}>`,
-      to: lead.email as string,
+  try {
+    const { copilot, account } = await getCopilotEmailAccount(copilotId);
+    emailAccountId = account.id;
+    const mail = await resolveMailTransport(account);
+    subject = interpolate(template.subject ?? "", lead, mail.sendName);
+    body = interpolate(template.body ?? "", lead, mail.sendName);
+
+    const info = await mail.transporter.sendMail({
+      from: `"${mail.sendName}" <${mail.email}>`,
+      to: toEmail,
       subject,
       text: body,
     });
 
-    const [copilot] = await db
-      .select({ userId: copilotsTable.userId })
-      .from(copilotsTable)
-      .where(eq(copilotsTable.id, copilotId))
-      .limit(1);
+    const messageId = info.messageId ?? null;
+    const now = new Date();
 
     await db.transaction(async (tx) => {
+      await tx.insert(sentEmailsTable).values({
+        copilotId,
+        copilotLeadId,
+        leadId: lead.id ?? null,
+        emailAccountId: account.id,
+        templateId: template.id,
+        sequenceStep,
+        toEmail,
+        subject,
+        body,
+        messageId,
+        status: "sent",
+        sentAt: now,
+      });
+
       await tx
         .update(copilotLeadsTable)
-        .set({ status: "sent", sentAt: new Date() })
+        .set({
+          status: "sent",
+          currentStep: sequenceStep,
+          sentAt: now,
+          updatedAt: now,
+        })
         .where(eq(copilotLeadsTable.id, copilotLeadId));
 
       await tx
         .update(copilotsTable)
         .set({
           emailsSent: sql`${copilotsTable.emailsSent} + 1`,
-          lastRunAt: new Date(),
-          updatedAt: new Date(),
+          lastRunAt: now,
+          updatedAt: now,
         })
         .where(eq(copilotsTable.id, copilotId));
     });
 
-    if (copilot) {
-      const subscription = await getActiveSubscription(copilot.userId);
-      if (subscription) {
-        await incrementUsage(copilot.userId, subscription.subscriptionId, {
-          emailsSent: 1,
-        });
-      }
+    const subscription = await getActiveSubscription(copilot.userId);
+    if (subscription) {
+      await incrementUsage(copilot.userId, subscription.subscriptionId, {
+        emailsSent: 1,
+      });
     }
 
-    console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
-    return { success: true };
+    console.log(`✅ Email sent to ${toEmail} (${lead.companyName})`);
+    return { success: true, messageId: messageId ?? undefined };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    const now = new Date();
 
-    await db
-      .update(copilotLeadsTable)
-      .set({
+    await db.transaction(async (tx) => {
+      await tx.insert(sentEmailsTable).values({
+        copilotId,
+        copilotLeadId,
+        leadId: lead.id ?? null,
+        emailAccountId,
+        templateId: template.id,
+        sequenceStep,
+        toEmail,
+        subject: subject || template.subject,
+        body: body || template.body,
         status: "failed",
-        failedAt: new Date(),
+        failedAt: now,
         errorMessage: message,
-      })
-      .where(eq(copilotLeadsTable.id, copilotLeadId));
+      });
 
-    console.error(`❌ Failed to send to ${lead.email}: ${message}`);
+      await tx
+        .update(copilotLeadsTable)
+        .set({
+          status: "failed",
+          failedAt: now,
+          errorMessage: message,
+          updatedAt: now,
+        })
+        .where(eq(copilotLeadsTable.id, copilotLeadId));
+    });
+
+    console.error(`❌ Failed to send to ${toEmail}: ${message}`);
     return { success: false, error: message };
   }
 }
@@ -319,7 +332,7 @@ async function periodicSend(): Promise<boolean> {
     }
 
     try {
-      await getCopilotSmtpConfig(copilot.id);
+      await getCopilotEmailAccount(copilot.id);
     } catch {
       await pauseCopilot(copilot.id, "Email profile not configured");
       continue;
@@ -334,6 +347,7 @@ async function periodicSend(): Promise<boolean> {
       pendingLead.copilotLeadId,
       pendingLead.lead,
       template,
+      0,
     );
 
     const afterSend = await getCopilotProgress(copilot, subscription);

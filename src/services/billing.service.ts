@@ -123,7 +123,7 @@ export async function subscribe(req: Request, res: Response) {
     amount: { currency: plan.currency, value: plan.amount },
     customerId: mollieCustomerId,
     sequenceType: SequenceType.first,
-    description: `${plan.name} plan – first payment`,
+    description: `${plan.name}`,
     redirectUrl: `${process.env.WEBHOOK_URL}/billing/subscribe/return?planId=${planId}`,
     webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
     metadata: { planId, userId: String(user.id) },
@@ -467,7 +467,7 @@ async function handleSuccessfulPayment(
             amount: { currency: plan.currency, value: plan.amount },
             interval: plan.interval,
             startDate,
-            description: `${plan.name} plan`,
+            description: `${plan.name}`,
             webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
             metadata: { planId: plan.id, userId: String(userId) },
           });

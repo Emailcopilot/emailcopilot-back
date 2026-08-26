@@ -36,6 +36,12 @@ jobs:
           CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
           CLERK_WEBHOOK_SIGNING_SECRET=${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+          OAUTH_REDIRECT_BASE=${{ vars.OAUTH_REDIRECT_BASE }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET=${{ secrets.MICROSOFT_CLIENT_SECRET }}
+          MICROSOFT_TENANT_ID=${{ vars.MICROSOFT_TENANT_ID }}
           EOF
 
       - name: Build and run with Docker Compose

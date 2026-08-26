@@ -208,7 +208,8 @@ async function ensureTestUser(config: TestUserConfig) {
         smtpHost: smtp.host,
         smtpPort: smtp.port,
         smtpPass: smtp.pass,
-        status: "active",
+        smtpStatus: "active",
+        imapStatus: "disabled",
         lastVerifiedAt: new Date(),
       })
       .returning();

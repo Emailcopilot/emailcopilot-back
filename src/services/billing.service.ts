@@ -88,21 +88,6 @@ export async function subscribe(req: Request, res: Response) {
     .orderBy(desc(subscriptionsTable.createdAt))
     .limit(1);
 
-  // Cancel any existing Mollie subscription so plan changes don't double-charge
-  if (existingSub?.mollieSubscriptionId && existingSub.mollieCustomerId) {
-    try {
-      await mollie.customerSubscriptions.cancel(
-        existingSub.mollieSubscriptionId,
-        { customerId: existingSub.mollieCustomerId },
-      );
-      console.log(
-        `🛑 Canceled previous Mollie subscription ${existingSub.mollieSubscriptionId}`,
-      );
-    } catch (err) {
-      console.warn(`⚠️  Could not cancel previous Mollie subscription:`, err);
-    }
-  }
-
   let mollieCustomerId: string;
   if (existingSub?.mollieCustomerId) {
     mollieCustomerId = existingSub.mollieCustomerId;
@@ -139,10 +124,9 @@ export async function subscribe(req: Request, res: Response) {
       const [updated] = await tx
         .update(subscriptionsTable)
         .set({
-          ...(stillUsable ? {} : { planId }),
+          ...(stillUsable ? {} : { planId, mollieSubscriptionId: null }),
           status: stillUsable ? "active" : "pending",
           mollieCustomerId,
-          mollieSubscriptionId: null,
           cancelAtPeriodEnd: false,
           updatedAt: new Date(),
         })
@@ -347,13 +331,9 @@ async function processWebhookPayment(id: string) {
         .set({ status: "failed" })
         .where(eq(invoicesTable.molliePaymentId, id));
 
-      // Recurring charge failed → mark subscription past_due
-      const [sub] = await db
-        .select()
-        .from(subscriptionsTable)
-        .where(eq(subscriptionsTable.userId, userId))
-        .limit(1);
-      if (sub?.mollieSubscriptionId) {
+      // Only recurring charges should mark the subscription past_due.
+      // Abandoned first-payment checkouts expire/cancel without a subscriptionId.
+      if (payment.subscriptionId) {
         await db
           .update(subscriptionsTable)
           .set({ status: "past_due", updatedAt: new Date() })
@@ -379,6 +359,67 @@ export async function processWebhook(req: Request, res: Response) {
     console.error("❌ Webhook processing error:", err);
     res.status(500).send("error");
   }
+}
+
+async function cancelMollieSubscription(customerId: string, subscriptionId: string) {
+  try {
+    await mollie.customerSubscriptions.cancel(subscriptionId, { customerId });
+    console.log(`🛑 Canceled Mollie subscription ${subscriptionId}`);
+  } catch (err) {
+    console.warn(`⚠️  Could not cancel Mollie subscription ${subscriptionId}:`, err);
+  }
+}
+
+/** Reuse or create a Mollie recurring sub for this plan; cancel leftover ones. */
+async function ensureMollieRecurringSubscription(opts: {
+  customerId: string;
+  plan: NonNullable<ReturnType<typeof getPlan>>;
+  userId: number;
+  startDate: string;
+}): Promise<string | null> {
+  const { customerId, plan, userId, startDate } = opts;
+  const existing = await mollie.customerSubscriptions.page({ customerId });
+  const live = existing.filter(
+    (s: { status: string }) => s.status === "active" || s.status === "pending",
+  );
+  const matching = live.find(
+    (s: { amount?: { value?: string } }) => s.amount?.value === plan.amount,
+  );
+
+  if (matching) {
+    for (const extra of live) {
+      if (extra.id !== matching.id) {
+        await cancelMollieSubscription(customerId, extra.id);
+      }
+    }
+    return matching.id;
+  }
+
+  const mandates = await mollie.customerMandates.page({ customerId });
+  const validMandate = mandates.find((m: { status: string }) => m.status === "valid");
+  if (!validMandate) {
+    console.warn(`⚠️  No valid mandate for customer ${customerId}; cannot create subscription`);
+    return null;
+  }
+
+  const mollieSub = await mollie.customerSubscriptions.create({
+    customerId,
+    amount: { currency: plan.currency, value: plan.amount },
+    interval: plan.interval,
+    startDate,
+    description: `${plan.name}`,
+    webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
+    metadata: { planId: plan.id, userId: String(userId) },
+  });
+  console.log(
+    `✅ Mollie subscription created: ${mollieSub.id} for user ${userId} (startDate=${startDate})`,
+  );
+
+  for (const extra of live) {
+    await cancelMollieSubscription(customerId, extra.id);
+  }
+
+  return mollieSub.id;
 }
 
 async function handleSuccessfulPayment(
@@ -430,53 +471,20 @@ async function handleSuccessfulPayment(
         .where(eq(invoicesTable.molliePaymentId, payment.id));
     }
 
-    let mollieSubscriptionId = sub.mollieSubscriptionId;
-
     // Renew the billing period on every successful payment (first or recurring)
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-    // Create the Mollie recurring subscription only after the first successful payment.
-    // startDate is set to periodEnd so the first payment covers the current month
-    // and Mollie does not charge again immediately.
-    if (!mollieSubscriptionId && payment.customerId) {
-      // Reuse an existing Mollie sub if a prior attempt created one but DB didn't persist it
-      const existingMollieSubs = await mollie.customerSubscriptions.page({
+    let mollieSubscriptionId = sub.mollieSubscriptionId;
+    if (payment.customerId) {
+      const ensured = await ensureMollieRecurringSubscription({
         customerId: payment.customerId,
+        plan,
+        userId,
+        startDate: periodEnd.toISOString().slice(0, 10),
       });
-      const reusable = existingMollieSubs.find(
-        (s: any) => s.status === "active" || s.status === "pending",
-      );
-
-      if (reusable) {
-        mollieSubscriptionId = reusable.id;
-        console.log(
-          `♻️  Reusing existing Mollie subscription ${mollieSubscriptionId} for user ${userId}`,
-        );
-      } else {
-        const mandates = await mollie.customerMandates.page({
-          customerId: payment.customerId,
-        });
-        const validMandate = mandates.find((m: any) => m.status === "valid");
-
-        if (validMandate) {
-          const startDate = periodEnd.toISOString().slice(0, 10);
-          const mollieSub = await mollie.customerSubscriptions.create({
-            customerId: payment.customerId,
-            amount: { currency: plan.currency, value: plan.amount },
-            interval: plan.interval,
-            startDate,
-            description: `${plan.name}`,
-            webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
-            metadata: { planId: plan.id, userId: String(userId) },
-          });
-          mollieSubscriptionId = mollieSub.id;
-          console.log(
-            `✅ Mollie subscription created: ${mollieSubscriptionId} for user ${userId} (startDate=${startDate})`,
-          );
-        }
-      }
+      if (ensured) mollieSubscriptionId = ensured;
     }
 
     await tx
@@ -518,14 +526,23 @@ async function handleSubscriptionWebhook(subscriptionId: string) {
       customerId: dbSub.mollieCustomerId,
     });
     const mapped = mapMollieStatus(mollieSub.status);
+    const periodValid =
+      !!dbSub.currentPeriodEnd && dbSub.currentPeriodEnd >= new Date();
+
+    // Future-dated Mollie subs stay "pending" until startDate; the first
+    // period is already paid so local access must remain active.
+    if (mapped === "pending" && periodValid) {
+      if (dbSub.status !== "active") {
+        await db
+          .update(subscriptionsTable)
+          .set({ status: "active", updatedAt: new Date() })
+          .where(eq(subscriptionsTable.id, dbSub.id));
+      }
+      return;
+    }
 
     // User canceled at period end: keep active until currentPeriodEnd
-    if (
-      mapped === "canceled" &&
-      dbSub.cancelAtPeriodEnd &&
-      dbSub.currentPeriodEnd &&
-      dbSub.currentPeriodEnd >= new Date()
-    ) {
+    if (mapped === "canceled" && dbSub.cancelAtPeriodEnd && periodValid) {
       return;
     }
 

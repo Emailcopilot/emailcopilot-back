@@ -163,7 +163,7 @@ async function sendCopilotLead(
       from: `"${mail.sendName}" <${mail.email}>`,
       to: toEmail,
       subject,
-      text: body,
+      html: body,
     });
 
     const messageId = info.messageId ?? null;

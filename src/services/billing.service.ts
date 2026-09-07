@@ -109,7 +109,7 @@ export async function subscribe(req: Request, res: Response) {
     customerId: mollieCustomerId,
     sequenceType: SequenceType.first,
     description: `${plan.name}`,
-    redirectUrl: `${process.env.WEBHOOK_URL}/billing/subscribe/return?planId=${planId}`,
+    redirectUrl: `${process.env.FRONTEND_URL}/dashboard/copilots`,
     webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
     metadata: { planId, userId: String(user.id) },
   });

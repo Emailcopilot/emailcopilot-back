@@ -1,10 +1,13 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { scrapeJobsTable } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 export async function listScrapeJobs(_req: Request, res: Response) {
-  const rows = await db.select().from(scrapeJobsTable);
+  const rows = await db
+    .select()
+    .from(scrapeJobsTable)
+    .orderBy(desc(scrapeJobsTable.createdAt));
   res.json(rows);
 }
 

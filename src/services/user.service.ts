@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { emailTemplatesTable, usersTable } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getAuth } from "@clerk/express";
 import { verifyWebhook } from "@clerk/express/webhooks";
 
@@ -31,7 +31,10 @@ export async function listUsers(req: Request, res: Response) {
     const user = await resolveUser(req, res);
     if (!user) return;
 
-    const rows = await db.select().from(usersTable);
+    const rows = await db
+      .select()
+      .from(usersTable)
+      .orderBy(desc(usersTable.createdAt));
     res.json(rows);
   } catch (err) {
     console.error("Error fetching users:", err);

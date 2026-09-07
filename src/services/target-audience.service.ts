@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { targetAudienceTable } from "../db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type {
   CreateTargetAudienceInput,
   UpdateTargetAudienceInput,
@@ -12,7 +12,8 @@ export async function listTargetAudiences(req: Request, res: Response) {
   const rows = await db
     .select()
     .from(targetAudienceTable)
-    .where(eq(targetAudienceTable.userId, userId));
+    .where(eq(targetAudienceTable.userId, userId))
+    .orderBy(desc(targetAudienceTable.createdAt));
   res.json(rows);
 }
 

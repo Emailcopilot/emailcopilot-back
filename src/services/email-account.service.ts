@@ -48,7 +48,8 @@ export async function listEmailAccounts(req: Request, res: Response) {
   const rows = await db
     .select()
     .from(emailAccountTable)
-    .where(eq(emailAccountTable.userId, userId));
+    .where(eq(emailAccountTable.userId, userId))
+    .orderBy(desc(emailAccountTable.createdAt));
   res.json(rows.map(sanitizeEmailAccount));
 }
 

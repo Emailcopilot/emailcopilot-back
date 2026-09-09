@@ -74,15 +74,43 @@ function assertMicrosoftConfigured() {
   }
 }
 
+const DEFAULT_RETURN_TO = "/dashboard/email-accounts";
+
+/** Only allow relative paths on our frontend origin (blocks open redirects). */
+function sanitizeReturnTo(raw: string | undefined | null): string {
+  if (!raw || typeof raw !== "string") return DEFAULT_RETURN_TO;
+
+  const trimmed = raw.trim();
+  // Prefer relative paths: /dashboard/...
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    return trimmed;
+  }
+
+  // Absolute URLs must match FRONTEND_URL origin
+  try {
+    const url = new URL(trimmed);
+    const allowed = new URL(FRONTEND_URL);
+    if (url.origin === allowed.origin) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+  } catch {
+    // ignore invalid URLs
+  }
+
+  return DEFAULT_RETURN_TO;
+}
+
 export function buildAuthorizeUrl(
   provider: OAuthProvider,
   userId: number,
+  returnTo?: string,
 ): string {
   const state = signOAuthState({
     userId,
     provider,
     nonce: randomBytes(16).toString("hex"),
     exp: Date.now() + STATE_TTL_MS,
+    returnTo: sanitizeReturnTo(returnTo),
   });
 
   if (provider === "gmail") {
@@ -387,8 +415,11 @@ async function upsertOAuthAccount(params: {
   return created!;
 }
 
-function frontendRedirect(query: Record<string, string>): string {
-  const url = new URL("/settings/email-accounts", FRONTEND_URL);
+function frontendRedirect(
+  returnTo: string | undefined,
+  query: Record<string, string>,
+): string {
+  const url = new URL(sanitizeReturnTo(returnTo), FRONTEND_URL);
   for (const [k, v] of Object.entries(query)) {
     url.searchParams.set(k, v);
   }
@@ -403,7 +434,10 @@ export async function startOAuth(req: Request, res: Response) {
     });
   }
 
-  const authUrl = buildAuthorizeUrl(provider, req.dbUser!.id);
+  const returnTo =
+    typeof req.query.returnTo === "string" ? req.query.returnTo : undefined;
+
+  const authUrl = buildAuthorizeUrl(provider, req.dbUser!.id, returnTo);
   res.json({ authUrl });
 }
 
@@ -414,16 +448,26 @@ export async function handleOAuthCallback(req: Request, res: Response) {
   const error =
     typeof req.query.error === "string" ? req.query.error : null;
 
+  // Best-effort returnTo from state even on early failures (before verify throws)
+  let returnTo: string | undefined;
+  if (state) {
+    try {
+      returnTo = verifyOAuthState(state).returnTo;
+    } catch {
+      // keep default
+    }
+  }
+
   if (error) {
     res.redirect(
-      frontendRedirect({ connected: "0", error, provider }),
+      frontendRedirect(returnTo, { connected: "0", error, provider }),
     );
     return;
   }
 
   if (!code || !state) {
     res.redirect(
-      frontendRedirect({
+      frontendRedirect(returnTo, {
         connected: "0",
         error: "missing_code_or_state",
         provider,
@@ -434,6 +478,7 @@ export async function handleOAuthCallback(req: Request, res: Response) {
 
   try {
     const payload = verifyOAuthState(state);
+    returnTo = payload.returnTo;
     if (payload.provider !== provider) {
       throw new Error("OAuth provider mismatch");
     }
@@ -464,7 +509,7 @@ export async function handleOAuthCallback(req: Request, res: Response) {
     });
 
     res.redirect(
-      frontendRedirect({
+      frontendRedirect(returnTo, {
         connected: "1",
         provider,
         accountId: String(account.id),
@@ -474,7 +519,7 @@ export async function handleOAuthCallback(req: Request, res: Response) {
     console.error("OAuth callback error:", err);
     const message = err instanceof Error ? err.message : "oauth_failed";
     res.redirect(
-      frontendRedirect({
+      frontendRedirect(returnTo, {
         connected: "0",
         error: message.slice(0, 200),
         provider,

@@ -59,6 +59,8 @@ export interface OAuthStatePayload {
   provider: OAuthProvider;
   nonce: string;
   exp: number;
+  /** Frontend path to land on after OAuth (e.g. /dashboard/settings). */
+  returnTo?: string;
 }
 
 function stateSecret(): string {

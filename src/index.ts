@@ -17,6 +17,7 @@ import { emailAccountsRouter, emailOAuthCallbackRouter } from "./routes/email-ac
 import { targetAudiencesRouter } from "./routes/target-audiences";
 import { flightSchedulesRouter } from "./routes/flight-schedules";
 import { usersRouter } from "./routes/user";
+import { analyticsRouter } from "./routes/analytics";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
 import { periodicSendScheduler } from "./services/mailer.service";
@@ -89,6 +90,7 @@ app.use("/email-profiles", deprecateLegacyRoute, emailAccountsRouter);
 app.use("/target-audiences", targetAudiencesRouter);
 app.use("/scrape-profiles", deprecateLegacyRoute, targetAudiencesRouter);
 app.use("/flight-schedules", flightSchedulesRouter);
+app.use("/analytics", analyticsRouter);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 

@@ -10,10 +10,30 @@ import {
 import { resolveImapClient } from "./email-transport.service";
 
 const IDLE_POLL_MS = 90 * 1000;
+const REPLY_DEBOUNCE_MS = 60 * 1000;
 /** Cap first-sync / catch-up so we never UID FETCH an entire large mailbox. */
 const MAX_FETCH_MESSAGES = 100;
 const BOUNCE_FROM_RE =
   /mailer-daemon|postmaster|mail delivery|noreply.*bounce/i;
+const recentlyProcessedReplies = new Map<string, number>();
+
+function isDebouncedReply(key: string): boolean {
+  const now = Date.now();
+  const processedAt = recentlyProcessedReplies.get(key);
+
+  for (const [storedKey, timestamp] of recentlyProcessedReplies) {
+    if (now - timestamp >= REPLY_DEBOUNCE_MS) {
+      recentlyProcessedReplies.delete(storedKey);
+    }
+  }
+
+  if (processedAt !== undefined && now - processedAt < REPLY_DEBOUNCE_MS) {
+    return true;
+  }
+
+  recentlyProcessedReplies.set(key, now);
+  return false;
+}
 
 function normalizeMessageId(id: string | undefined | null): string | null {
   if (!id) return null;
@@ -89,14 +109,22 @@ async function markReply(
 ) {
   const now = new Date();
   await db.transaction(async (tx) => {
-    await tx
+    const updatedSent = await tx
       .update(sentEmailsTable)
       .set({
         status: "replied",
         repliedAt: now,
         updatedAt: now,
       })
-      .where(eq(sentEmailsTable.id, sentEmailId));
+      .where(
+        and(
+          eq(sentEmailsTable.id, sentEmailId),
+          eq(sentEmailsTable.status, "sent"),
+        ),
+      )
+      .returning({ id: sentEmailsTable.id });
+
+    if (updatedSent.length === 0) return;
 
     if (copilotLeadId) {
       const updated = await tx
@@ -416,6 +444,8 @@ async function processAccount(account: EmailAccount): Promise<void> {
         if (relatedIds.length > 0) {
           const matched = await findSentByMessageIds(relatedIds);
           if (matched && matched.status === "sent") {
+            const replyKey = `${account.id}:${msg.uid}:${relatedIds.join(",")}`;
+            if (isDebouncedReply(replyKey)) continue;
             await markReply(matched.id, matched.copilotLeadId, matched.copilotId);
             console.log(
               `💬 Reply detected for sent_email ${matched.id} (${matched.toEmail})`,
@@ -427,6 +457,8 @@ async function processAccount(account: EmailAccount): Promise<void> {
         // Fallback: From matches a recent recipient
         const byFrom = await findSentByRecipient(account.id, fromEmail);
         if (byFrom && byFrom.status === "sent") {
+          const replyKey = `${account.id}:${msg.uid}:${fromEmail}`;
+          if (isDebouncedReply(replyKey)) continue;
           await markReply(byFrom.id, byFrom.copilotLeadId, byFrom.copilotId);
           console.log(
             `💬 Reply (from-match) for sent_email ${byFrom.id} (${byFrom.toEmail})`,

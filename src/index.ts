@@ -38,11 +38,24 @@ const PORT = process.env.PORT || 3001;
 // ─── Global middleware ────────────────────────────────────────────────────────
 app.use(express.urlencoded({ extended: true })); // required for Mollie webhooks
 app.use(express.json());
-const origin = process.env.ALLOWED_ORIGIN?.split(",");
-console.log("origin", origin);
+const allowedOrigins =
+  process.env.ALLOWED_ORIGIN?.split(",")
+    .map((o) => o.trim())
+    .filter(Boolean) ?? ["http://localhost:3000"];
+console.log("origin", allowedOrigins);
 app.use(
   cors({
-    origin: origin || "http://localhost:3000",
+    origin: (requestOrigin, callback) => {
+      if (!requestOrigin) return callback(null, true);
+      if (allowedOrigins.includes(requestOrigin)) return callback(null, true);
+      try {
+        if (new URL(requestOrigin).hostname.endsWith(".vercel.app"))
+          return callback(null, true);
+      } catch {
+        // fall through to rejection below
+      }
+      callback(new Error(`Origin ${requestOrigin} not allowed by CORS`));
+    },
     // methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
     // allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,

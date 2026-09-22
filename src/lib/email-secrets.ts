@@ -108,7 +108,7 @@ export function verifyOAuthState(state: string): OAuthStatePayload {
 export const PROVIDER_PRESETS = {
   gmail: {
     smtpHost: "smtp.gmail.com",
-    smtpPort: 465,
+    smtpPort: 587,
     imapHost: "imap.gmail.com",
     imapPort: 993,
   },

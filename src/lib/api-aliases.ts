@@ -20,12 +20,19 @@ export function normalizeCopilotInput<T extends CopilotAliasFields>(body: T) {
     ...rest
   } = body;
 
+  // An explicit null clears a relation; undefined falls back to a legacy alias.
   return {
     ...rest,
-    emailAccountId: rest.emailAccountId ?? emailProfileId,
-    emailAccount: rest.emailAccount ?? emailProfile,
-    targetAudienceId: rest.targetAudienceId ?? scrapeProfileId,
-    targetAudience: rest.targetAudience ?? scrapeProfile,
+    emailAccountId:
+      rest.emailAccountId === undefined ? emailProfileId : rest.emailAccountId,
+    emailAccount:
+      rest.emailAccount === undefined ? emailProfile : rest.emailAccount,
+    targetAudienceId:
+      rest.targetAudienceId === undefined
+        ? scrapeProfileId
+        : rest.targetAudienceId,
+    targetAudience:
+      rest.targetAudience === undefined ? scrapeProfile : rest.targetAudience,
   };
 }
 

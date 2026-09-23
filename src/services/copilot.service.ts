@@ -365,13 +365,13 @@ export async function updateCopilot(
     ...copilotFields
   } = data;
 
-  let targetAudienceId = data.targetAudienceId ?? null;
+  let targetAudienceId: number | null | undefined = data.targetAudienceId;
   const targetAudience = nestedTargetAudience ?? null;
 
-  let emailAccountId = data.emailAccountId ?? null;
+  let emailAccountId: number | null | undefined = data.emailAccountId;
   const emailAccount = nestedEmailAccount ?? null;
 
-  let templateId = data.templateId ?? null;
+  let templateId: number | null | undefined = data.templateId;
   const template = nestedTemplate ?? null;
 
   let flightScheduleId: number | null | undefined = data.flightScheduleId;
@@ -416,6 +416,11 @@ export async function updateCopilot(
 
     if (!existing)
       throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+
+    if (targetAudienceId === undefined)
+      targetAudienceId = existing.targetAudienceId;
+    if (emailAccountId === undefined) emailAccountId = existing.emailAccountId;
+    if (templateId === undefined) templateId = existing.templateId;
 
     flightScheduleId = flightScheduleId ?? existing.flightScheduleId ?? null;
 

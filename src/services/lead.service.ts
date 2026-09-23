@@ -4,10 +4,16 @@ import {
   copilotsTable,
   emailTemplatesTable,
   leadsTable,
+  suppressedEmailsTable,
 } from "../db/schema";
 import { db } from "../db/drizzle";
 import { eq, desc, and, getTableColumns, isNotNull } from "drizzle-orm";
-import type { ListLeadsInput } from "../validators/lead.validator";
+import type {
+  ListLeadsInput,
+  UpdateLeadSuppressionInput,
+} from "../validators/lead.validator";
+
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 export async function listLeads(req: Request, res: Response) {
   const { page, limit, copilotId } = req.query as unknown as ListLeadsInput;
@@ -71,4 +77,47 @@ export async function getLead(req: Request<{ id: string }>, res: Response) {
   if (!lead)
     throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
   res.json(lead);
+}
+
+export async function updateLeadSuppression(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const { doNotContact } = req.body as UpdateLeadSuppressionInput;
+  const userId = req.dbUser!.id;
+
+  const [lead] = await db
+    .select({ id: leadsTable.id, email: leadsTable.email })
+    .from(leadsTable)
+    .innerJoin(copilotLeadsTable, eq(copilotLeadsTable.leadId, leadsTable.id))
+    .innerJoin(copilotsTable, eq(copilotLeadsTable.copilotId, copilotsTable.id))
+    .where(and(eq(leadsTable.id, id), eq(copilotsTable.userId, userId)))
+    .limit(1);
+
+  if (!lead) {
+    throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
+  }
+  if (!lead.email) {
+    throw Object.assign(new Error("Lead has no email address"), { statusCode: 400 });
+  }
+
+  const email = normalizeEmail(lead.email);
+  if (doNotContact) {
+    await db
+      .insert(suppressedEmailsTable)
+      .values({ userId, email })
+      .onConflictDoNothing();
+  } else {
+    await db
+      .delete(suppressedEmailsTable)
+      .where(
+        and(
+          eq(suppressedEmailsTable.userId, userId),
+          eq(suppressedEmailsTable.email, email),
+        ),
+      );
+  }
+
+  res.json({ doNotContact });
 }

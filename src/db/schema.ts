@@ -99,6 +99,19 @@ export const usersTable = pgTable("users", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export const suppressedEmailsTable = pgTable(
+  "suppressed_emails",
+  {
+    id: d.integer().primaryKey().generatedAlwaysAsIdentity(),
+    userId: integer()
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    email: varchar({ length: 255 }).notNull(),
+    createdAt: timestamp().notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex().on(table.userId, table.email)],
+);
+
 // ─── Email Accounts ───────────────────────────────────────────────────────────
 
 export const emailAccountTable = pgTable(
@@ -429,6 +442,9 @@ export const usageTable = pgTable("usage", {
 
 export type User = typeof usersTable.$inferSelect;
 export type NewUser = typeof usersTable.$inferInsert;
+
+export type SuppressedEmail = typeof suppressedEmailsTable.$inferSelect;
+export type NewSuppressedEmail = typeof suppressedEmailsTable.$inferInsert;
 
 export type EmailAccount = typeof emailAccountTable.$inferSelect;
 export type NewEmailAccount = typeof emailAccountTable.$inferInsert;

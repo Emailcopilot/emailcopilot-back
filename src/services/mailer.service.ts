@@ -5,9 +5,10 @@ import {
   copilotsTable,
   copilotLeadsTable,
   leadsTable,
+  suppressedEmailsTable,
   sentEmailsTable,
 } from "../db/schema";
-import { eq, and, sql, asc, isNotNull, ne } from "drizzle-orm";
+import { eq, and, sql, asc, isNotNull, ne, notExists } from "drizzle-orm";
 import type { EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
 import { incrementUsage } from "../lib/helpers";
@@ -147,13 +148,40 @@ async function sendCopilotLead(
   template: EmailTemplate,
   sequenceStep = 0,
 ): Promise<SendResult> {
-  const toEmail = lead.email as string;
+  const toEmail = lead.email?.trim();
+  if (!toEmail) {
+    return { success: false, error: "Lead has no email address" };
+  }
+
   let subject = "";
   let body = "";
   let emailAccountId: number | null = null;
 
   try {
     const { copilot, account } = await getCopilotEmailAccount(copilotId);
+    const [suppressed] = await db
+      .select({ id: suppressedEmailsTable.id })
+      .from(suppressedEmailsTable)
+      .where(
+        and(
+          eq(suppressedEmailsTable.userId, copilot.userId),
+          eq(suppressedEmailsTable.email, toEmail.toLowerCase()),
+        ),
+      )
+      .limit(1);
+
+    if (suppressed) {
+      await db
+        .update(copilotLeadsTable)
+        .set({
+          status: "failed",
+          errorMessage: "Skipped because this contact is suppressed",
+          updatedAt: new Date(),
+        })
+        .where(eq(copilotLeadsTable.id, copilotLeadId));
+      return { success: false, error: "Contact is suppressed" };
+    }
+
     emailAccountId = account.id;
     const mail = await resolveMailTransport(account);
     subject = interpolate(template.subject ?? "", lead, mail.sendName);
@@ -314,6 +342,20 @@ async function periodicSend(): Promise<boolean> {
           eq(copilotLeadsTable.status, "new"),
           isNotNull(leadsTable.email),
           ne(leadsTable.email, ""),
+          notExists(
+            db
+              .select({ id: suppressedEmailsTable.id })
+              .from(suppressedEmailsTable)
+              .where(
+                and(
+                  eq(suppressedEmailsTable.userId, copilot.userId),
+                  eq(
+                    suppressedEmailsTable.email,
+                    sql`lower(trim(${leadsTable.email}))`,
+                  ),
+                ),
+              ),
+          ),
         ),
       )
       .orderBy(asc(copilotLeadsTable.createdAt))

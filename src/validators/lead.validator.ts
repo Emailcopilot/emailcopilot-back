@@ -6,4 +6,9 @@ export const listLeadsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+export const updateLeadSuppressionSchema = z.object({
+  doNotContact: z.boolean(),
+});
+
 export type ListLeadsInput = z.infer<typeof listLeadsSchema>;
+export type UpdateLeadSuppressionInput = z.infer<typeof updateLeadSuppressionSchema>;

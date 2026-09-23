@@ -61,7 +61,18 @@ export const createCopilotSchema = z.object({
   flightSchedule: flightScheduleObject.optional(),
 });
 
-export const updateCopilotSchema = createCopilotSchema.partial();
+const optionalRelationIdSchema = z
+  .number()
+  .int()
+  .positive()
+  .nullable()
+  .optional();
+
+export const updateCopilotSchema = createCopilotSchema.partial().extend({
+  emailAccountId: optionalRelationIdSchema,
+  templateId: optionalRelationIdSchema,
+  targetAudienceId: optionalRelationIdSchema,
+});
 
 export const updateCopilotStatusSchema = z.object({
   status: z.enum([

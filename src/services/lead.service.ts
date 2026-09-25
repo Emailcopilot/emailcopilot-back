@@ -65,8 +65,8 @@ export async function listLeads(req: Request, res: Response) {
   ]);
 
   res.json({
-    data: rows,
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    data: rows,
   });
 }
 
@@ -77,11 +77,20 @@ export async function getLead(req: Request<{ id: string }>, res: Response) {
   const [lead] = await db
     .select({
       ...getTableColumns(leadsTable),
+      suppressed: sql`case when ${suppressedEmailsTable.id} is not null then true else false end`,
     })
     .from(leadsTable)
     .where(and(eq(leadsTable.id, id), eq(copilotsTable.userId, userId)))
     .leftJoin(copilotLeadsTable, eq(leadsTable.id, copilotLeadsTable.leadId))
-    .leftJoin(copilotsTable, eq(copilotLeadsTable.copilotId, copilotsTable.id));
+    .leftJoin(copilotsTable, eq(copilotLeadsTable.copilotId, copilotsTable.id))
+    .leftJoin(
+      suppressedEmailsTable,
+      and(
+        eq(suppressedEmailsTable.userId, userId),
+        eq( sql`lower(trim(${suppressedEmailsTable.email}))`, sql`lower(trim(${leadsTable.email}))` ),
+      ),
+    )
+    .limit(1);
 
   if (!lead)
     throw notFound("Lead not found");

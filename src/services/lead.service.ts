@@ -1,3 +1,4 @@
+import { badRequest, notFound } from "../lib/http-error";
 import type { Request, Response } from "express";
 import {
   copilotLeadsTable,
@@ -75,7 +76,7 @@ export async function getLead(req: Request<{ id: string }>, res: Response) {
     .leftJoin(copilotsTable, eq(copilotLeadsTable.copilotId, copilotsTable.id));
 
   if (!lead)
-    throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
+    throw notFound("Lead not found");
   res.json(lead);
 }
 
@@ -96,10 +97,10 @@ export async function updateLeadSuppression(
     .limit(1);
 
   if (!lead) {
-    throw Object.assign(new Error("Lead not found"), { statusCode: 404 });
+    throw notFound("Lead not found");
   }
   if (!lead.email) {
-    throw Object.assign(new Error("Lead has no email address"), { statusCode: 400 });
+    throw badRequest("Lead has no email address");
   }
 
   const email = normalizeEmail(lead.email);

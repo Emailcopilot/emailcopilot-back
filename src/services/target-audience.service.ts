@@ -1,3 +1,4 @@
+import { notFound } from "../lib/http-error";
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { targetAudienceTable } from "../db/schema";
@@ -29,10 +30,7 @@ export async function getTargetAudience(
     .from(targetAudienceTable)
     .where(and(eq(targetAudienceTable.id, id), eq(targetAudienceTable.userId, userId)));
   if (!row)
-    throw Object.assign(
-      new Error("Target audience not found getTargetAudience"),
-      { statusCode: 404 },
-    );
+    throw notFound("Target audience not found getTargetAudience");
   res.json(row);
 }
 
@@ -61,10 +59,7 @@ export async function updateTargetAudience(
     .where(and(eq(targetAudienceTable.id, id), eq(targetAudienceTable.userId, userId)))
     .returning();
   if (!updated)
-    throw Object.assign(
-      new Error("Target audience not found updateTargetAudience"),
-      { statusCode: 404 },
-    );
+    throw notFound("Target audience not found updateTargetAudience");
   res.json(updated);
 }
 

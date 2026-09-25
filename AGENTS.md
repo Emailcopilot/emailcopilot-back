@@ -39,7 +39,9 @@ export async function listLeads(req: Request, res: Response) {
 ```
 
 Notes:
-- Throw `Object.assign(new Error("..."), { statusCode: 404 })` for HTTP errors.
+- Throw `HttpError`s from `src/lib/http-error.ts` for HTTP errors:
+  `throw notFound("Lead not found")` (helpers: `badRequest` 400, `forbidden` 403,
+  `notFound` 404, `serviceUnavailable` 503, or `new HttpError(status, message)`).
 - `validate()` replaces `req.body` / `req.params`; for `query` it redefines the property (Express 5 `req.query` is read-only).
 - Special cases (e.g. Mollie webhook plain-text 500 for retries) may catch locally inside the service handler.
 

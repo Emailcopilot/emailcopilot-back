@@ -1,3 +1,4 @@
+import { badRequest, forbidden, notFound } from "../lib/http-error";
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import {
@@ -36,12 +37,7 @@ function prepareNestedEmailAccount(
   userId: number,
 ) {
   if (emailAccount.provider === "gmail" || emailAccount.provider === "outlook") {
-    throw Object.assign(
-      new Error(
-        `Connect ${emailAccount.provider} via GET /email-accounts/oauth/${emailAccount.provider}/start`,
-      ),
-      { statusCode: 400 },
-    );
+    throw badRequest(`Connect ${emailAccount.provider} via GET /email-accounts/oauth/${emailAccount.provider}/start`);
   }
 
   const preset =
@@ -86,9 +82,7 @@ async function getActiveSubscription(userId: number) {
     .orderBy(desc(subscriptionsTable.createdAt));
   const sub = subs[0];
   if (!sub || !isSubscriptionUsable(sub))
-    throw Object.assign(new Error("No active subscription found"), {
-      statusCode: 403,
-    });
+    throw forbidden("No active subscription found");
   return sub;
 }
 
@@ -102,12 +96,7 @@ async function assertCopilotWithinPlanLimit(userId: number, planId: string) {
     .where(and(eq(copilotsTable.userId, userId), ne(copilotsTable.status, "archived")));
 
   if (copilotsCount >= limits.copilots) {
-    throw Object.assign(
-      new Error(
-        `Plan limit reached: max ${limits.copilots} copilots on ${planId}`,
-      ),
-      { statusCode: 403 },
-    );
+    throw forbidden(`Plan limit reached: max ${limits.copilots} copilots on ${planId}`);
   }
 }
 
@@ -118,7 +107,7 @@ async function validateCopilotCanActivate(copilotId: number) {
     .where(eq(copilotsTable.id, copilotId));
 
   if (!copilot) {
-    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+    throw notFound("Copilot not found");
   }
 
   const errors: string[] = [];
@@ -134,16 +123,11 @@ async function validateCopilotCanActivate(copilotId: number) {
   }
 
   if (errors.length > 0) {
-    throw Object.assign(
-      new Error(`Cannot activate copilot. Missing: ${errors.join(", ")}`),
-      { statusCode: 400 },
-    );
+    throw badRequest(`Cannot activate copilot. Missing: ${errors.join(", ")}`);
   }
 
   if (!copilot.emailAccountId) {
-    throw Object.assign(new Error("Email account is not properly configured"), {
-      statusCode: 400,
-    });
+    throw badRequest("Email account is not properly configured");
   }
 
   const [profile] = await db
@@ -152,31 +136,21 @@ async function validateCopilotCanActivate(copilotId: number) {
     .where(eq(emailAccountTable.id, copilot.emailAccountId));
 
   if (!profile || !profile.email) {
-    throw Object.assign(new Error("Email account is not properly configured"), {
-      statusCode: 400,
-    });
+    throw badRequest("Email account is not properly configured");
   }
 
   const isOauth =
     profile.provider === "gmail" || profile.provider === "outlook";
   if (isOauth) {
     if (!profile.oauthRefreshToken && !profile.oauthAccessToken) {
-      throw Object.assign(
-        new Error("Email account OAuth tokens are missing — reconnect the account"),
-        { statusCode: 400 },
-      );
+      throw badRequest("Email account OAuth tokens are missing — reconnect the account");
     }
   } else if (!profile.smtpHost || !profile.smtpPass) {
-    throw Object.assign(new Error("Email account is not properly configured"), {
-      statusCode: 400,
-    });
+    throw badRequest("Email account is not properly configured");
   }
 
   if (profile.smtpStatus === "error") {
-    throw Object.assign(
-      new Error("Email account SMTP is in error state — verify or reconnect"),
-      { statusCode: 400 },
-    );
+    throw badRequest("Email account SMTP is in error state — verify or reconnect");
   }
 }
 
@@ -222,7 +196,7 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
     .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!row)
-    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+    throw notFound("Copilot not found");
 
   res.json(sanitizeCopilotRow(row));
 }
@@ -415,7 +389,7 @@ export async function updateCopilot(
       .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
     if (!existing)
-      throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+      throw notFound("Copilot not found");
 
     flightScheduleId = flightScheduleId ?? existing.flightScheduleId ?? null;
 
@@ -451,7 +425,7 @@ export async function updateCopilot(
       .returning();
 
     if (!row)
-      throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+      throw notFound("Copilot not found");
 
     if (targetAudienceId && !targetAudienceData) {
       const [profile] = await tx
@@ -528,7 +502,7 @@ export async function duplicateCopilot(
     .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!original) {
-    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+    throw notFound("Copilot not found");
   }
 
   const sub = await getActiveSubscription(userId);
@@ -601,7 +575,7 @@ export async function updateCopilotStatus(
     .returning();
 
   if (!updated)
-    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+    throw notFound("Copilot not found");
 
   if (data.status === "active") {
     await validateCopilotCanActivate(id);
@@ -620,7 +594,7 @@ export async function runCopilot(req: Request<{ id: string }>, res: Response) {
     .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!copilot) {
-    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+    throw notFound("Copilot not found");
   }
 
   await validateCopilotCanActivate(id);
@@ -660,7 +634,7 @@ export async function getCopilotStatus(
     .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
 
   if (!copilot) {
-    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+    throw notFound("Copilot not found");
   }
 
   let scrapeJob = null;

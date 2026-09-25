@@ -8,10 +8,11 @@ export interface AppError extends Error {
  * Central Express error handler. Register this LAST in your app middleware
  * chain with app.use(errorHandler).
  *
- * Usage inside route handlers:
- *   return next(new Error("Something went wrong"))
- * Or for custom status codes:
- *   const err: AppError = new Error("Not found"); err.statusCode = 404; next(err);
+ * Usage inside route handlers (services throw, Express 5 forwards to here):
+ *   throw new Error("Something went wrong")            -> 500
+ *   throw notFound("Lead not found")                   -> 404
+ *   throw new HttpError(418, "I'm a teapot")           -> 418
+ * (see src/lib/http-error.ts)
  */
 export function errorHandler(
   err: AppError,

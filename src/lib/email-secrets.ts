@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { decrypt, encrypt } from "./encryption";
 import { ENCRYPTION_KEY } from "./env";
 import type { EmailAccount } from "../db/schema";
+import { badRequest } from "./http-error";
 
 const SECRET_PREFIX = "v1:";
 
@@ -79,7 +80,7 @@ export function signOAuthState(payload: OAuthStatePayload): string {
 export function verifyOAuthState(state: string): OAuthStatePayload {
   const [body, sig] = state.split(".");
   if (!body || !sig) {
-    throw Object.assign(new Error("Invalid OAuth state"), { statusCode: 400 });
+    throw badRequest("Invalid OAuth state");
   }
 
   const expected = createHmac("sha256", stateSecret())
@@ -89,9 +90,7 @@ export function verifyOAuthState(state: string): OAuthStatePayload {
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    throw Object.assign(new Error("Invalid OAuth state signature"), {
-      statusCode: 400,
-    });
+    throw badRequest("Invalid OAuth state signature");
   }
 
   const payload = JSON.parse(
@@ -99,7 +98,7 @@ export function verifyOAuthState(state: string): OAuthStatePayload {
   ) as OAuthStatePayload;
 
   if (!payload.exp || Date.now() > payload.exp) {
-    throw Object.assign(new Error("OAuth state expired"), { statusCode: 400 });
+    throw badRequest("OAuth state expired");
   }
 
   return payload;

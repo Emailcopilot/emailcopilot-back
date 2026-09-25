@@ -350,7 +350,7 @@ async function periodicSend(): Promise<boolean> {
                 and(
                   eq(suppressedEmailsTable.userId, copilot.userId),
                   eq(
-                    suppressedEmailsTable.email,
+                    sql`lower(trim(${suppressedEmailsTable.email}))`,
                     sql`lower(trim(${leadsTable.email}))`,
                   ),
                 ),

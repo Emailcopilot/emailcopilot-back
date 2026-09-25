@@ -8,7 +8,7 @@ import {
   suppressedEmailsTable,
 } from "../db/schema";
 import { db } from "../db/drizzle";
-import { eq, desc, and, getTableColumns, isNotNull } from "drizzle-orm";
+import { eq, desc, and, getTableColumns, isNotNull, sql } from "drizzle-orm";
 import type {
   ListLeadsInput,
   UpdateLeadSuppressionInput,
@@ -35,6 +35,7 @@ export async function listLeads(req: Request, res: Response) {
         copilotName: copilotsTable.name,
         sentAt: copilotLeadsTable.sentAt,
         status: copilotLeadsTable.status,
+        suppressed: sql`case when ${suppressedEmailsTable.id} is not null then true else false end`,
       })
       .from(copilotLeadsTable)
       .leftJoin(
@@ -45,6 +46,13 @@ export async function listLeads(req: Request, res: Response) {
       .leftJoin(
         emailTemplatesTable,
         eq(copilotsTable.templateId, emailTemplatesTable.id),
+    )
+      .leftJoin(
+        suppressedEmailsTable,
+        and(
+          eq(suppressedEmailsTable.userId, userId),
+          eq( sql`lower(trim(${suppressedEmailsTable.email}))`, sql`lower(trim(${leadsTable.email}))` ),
+        ),
       )
       .where(where);
 
@@ -115,7 +123,7 @@ export async function updateLeadSuppression(
       .where(
         and(
           eq(suppressedEmailsTable.userId, userId),
-          eq(suppressedEmailsTable.email, email),
+          eq( sql`lower(trim(${suppressedEmailsTable.email}))`, sql`lower(trim(${email}))` ),
         ),
       );
   }

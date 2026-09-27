@@ -1,3 +1,4 @@
+import { badRequest, forbidden, notFound } from "../lib/http-error";
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { emailAccountTable, subscriptionsTable } from "../db/schema";
@@ -67,9 +68,7 @@ export async function getEmailAccount(
       and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
     );
   if (!row)
-    throw Object.assign(new Error("Email account not found"), {
-      statusCode: 404,
-    });
+    throw notFound("Email account not found");
   res.json(sanitizeEmailAccount(row));
 }
 
@@ -82,9 +81,7 @@ async function getUsableSubscription(userId: number) {
     .limit(1);
 
   if (!sub || !isSubscriptionUsable(sub)) {
-    throw Object.assign(new Error("No active subscription found"), {
-      statusCode: 403,
-    });
+    throw forbidden("No active subscription found");
   }
   return sub;
 }
@@ -102,12 +99,7 @@ async function assertEmailAccountWithinPlanLimit(
     .where(eq(emailAccountTable.userId, userId));
 
   if (accountsCount >= limits.emailAccounts) {
-    throw Object.assign(
-      new Error(
-        `Plan limit reached: max ${limits.emailAccounts} email accounts on ${planId}`,
-      ),
-      { statusCode: 403 },
-    );
+    throw forbidden(`Plan limit reached: max ${limits.emailAccounts} email accounts on ${planId}`);
   }
 }
 
@@ -147,19 +139,11 @@ export async function createEmailAccount(req: Request, res: Response) {
   const data = req.body as CreateEmailAccountInput;
 
   if (data.provider === "smtp" && (!data.smtpHost || !data.smtpPass)) {
-    throw Object.assign(
-      new Error("smtpHost and smtpPass are required for SMTP accounts"),
-      { statusCode: 400 },
-    );
+    throw badRequest("smtpHost and smtpPass are required for SMTP accounts");
   }
 
   if (data.provider === "gmail" || data.provider === "outlook") {
-    throw Object.assign(
-      new Error(
-        `Use GET /email-accounts/oauth/${data.provider}/start to connect ${data.provider}`,
-      ),
-      { statusCode: 400 },
-    );
+    throw badRequest(`Use GET /email-accounts/oauth/${data.provider}/start to connect ${data.provider}`);
   }
 
   const sub = await getUsableSubscription(userId);
@@ -205,9 +189,7 @@ export async function updateEmailAccount(
     )
     .returning();
   if (!updated)
-    throw Object.assign(new Error("Email account not found"), {
-      statusCode: 404,
-    });
+    throw notFound("Email account not found");
   res.json(sanitizeEmailAccount(updated));
 }
 
@@ -245,18 +227,13 @@ async function verifyEmailAccountForUser(
       and(eq(emailAccountTable.userId, userId), eq(emailAccountTable.id, id)),
     );
   if (!account)
-    throw Object.assign(new Error("Email account not found"), {
-      statusCode: 404,
-    });
+    throw notFound("Email account not found");
 
   if (!isAccountConfigured(account)) {
-    throw Object.assign(
-      new Error(
-        account.provider === "smtp"
-          ? "SMTP configuration incomplete. smtpHost, email, and smtpPass are required."
-          : "OAuth tokens missing. Reconnect the account via OAuth.",
-      ),
-      { statusCode: 400 },
+    throw badRequest(
+      account.provider === "smtp"
+        ? "SMTP configuration incomplete. smtpHost, email, and smtpPass are required."
+        : "OAuth tokens missing. Reconnect the account via OAuth.",
     );
   }
 

@@ -1,3 +1,4 @@
+import { notFound } from "../lib/http-error";
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { emailTemplatesTable } from "../db/schema";
@@ -30,7 +31,7 @@ export async function getTemplate(req: Request<{ id: string }>, res: Response) {
     .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)));
 
   if (!row)
-    throw Object.assign(new Error("Template not found"), { statusCode: 404 });
+    throw notFound("Template not found");
 
   res.json(row);
 }
@@ -68,7 +69,7 @@ export async function updateTemplate(
     });
 
   if (!updated)
-    throw Object.assign(new Error("Template not found"), { statusCode: 404 });
+    throw notFound("Template not found");
 
   res.json(updated);
 }
@@ -85,7 +86,7 @@ export async function patchTemplate(
     .returning();
 
   if (!updated)
-    throw Object.assign(new Error("Template not found"), { statusCode: 404 });
+    throw notFound("Template not found");
 
   return updated;
 }
@@ -117,7 +118,7 @@ export async function duplicateTemplate(
     .where(and(eq(emailTemplatesTable.userId, userId), eq(emailTemplatesTable.id, id)));
 
   if (!original)
-    throw Object.assign(new Error("Template not found"), { statusCode: 404 });
+    throw notFound("Template not found");
 
   const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = original;
   const [duplicate] = await db

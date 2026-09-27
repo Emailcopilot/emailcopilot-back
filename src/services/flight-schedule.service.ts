@@ -1,3 +1,4 @@
+import { notFound } from "../lib/http-error";
 import type { Request, Response } from "express";
 import { db } from "../db/drizzle";
 import { flightScheduleTable } from "../db/schema";
@@ -31,9 +32,7 @@ export async function getFlightSchedule(
       and(eq(flightScheduleTable.id, id), eq(flightScheduleTable.userId, userId)),
     );
   if (!row)
-    throw Object.assign(new Error("Flight schedule not found"), {
-      statusCode: 404,
-    });
+    throw notFound("Flight schedule not found");
   res.json(row);
 }
 
@@ -64,9 +63,7 @@ export async function updateFlightSchedule(
     )
     .returning();
   if (!updated)
-    throw Object.assign(new Error("Flight schedule not found"), {
-      statusCode: 404,
-    });
+    throw notFound("Flight schedule not found");
   res.json(updated);
 }
 

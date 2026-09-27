@@ -20,6 +20,7 @@ import {
   isSubscriptionUsable,
 } from "../lib/billing";
 import type { SubscribeInput } from "../validators/billing.validator";
+import { badRequest, notFound } from "../lib/http-error";
 
 const mollie: MollieClient = createMollieClient({
   apiKey: process.env.MOLLIE_API_KEY!,
@@ -59,7 +60,7 @@ export async function getSubscription(req: Request, res: Response) {
     .limit(1);
 
   if (!sub) {
-    throw Object.assign(new Error("No subscription found"), { statusCode: 404 });
+    throw notFound("No subscription found");
   }
   res.json(sub);
 }
@@ -177,9 +178,7 @@ export async function cancelSubscription(req: Request, res: Response) {
     .limit(1);
 
   if (!sub?.mollieSubscriptionId || !sub.mollieCustomerId) {
-    throw Object.assign(new Error("No active Mollie subscription found"), {
-      statusCode: 400,
-    });
+    throw badRequest("No active Mollie subscription found");
   }
 
   // Mark cancel-at-period-end first so a racing Mollie webhook won't drop access
@@ -231,7 +230,7 @@ export async function getLimits(req: Request, res: Response) {
 
   const planLimits = getPlanLimits(sub.planId);
   if (!planLimits) {
-    throw Object.assign(new Error("Unknown plan"), { statusCode: 400 });
+    throw badRequest("Unknown plan");
   }
 
   const now = new Date();

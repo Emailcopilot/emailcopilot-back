@@ -20,6 +20,7 @@ import { emailAccountTable, type EmailAccount } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import type { Request, Response } from "express";
+import { badRequest, serviceUnavailable } from "../lib/http-error";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -56,21 +57,13 @@ function redirectUri(provider: OAuthProvider): string {
 
 function assertGoogleConfigured() {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-    throw Object.assign(
-      new Error("Google OAuth is not configured (GOOGLE_CLIENT_ID/SECRET)"),
-      { statusCode: 503 },
-    );
+    throw serviceUnavailable("Google OAuth is not configured (GOOGLE_CLIENT_ID/SECRET)");
   }
 }
 
 function assertMicrosoftConfigured() {
   if (!MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET) {
-    throw Object.assign(
-      new Error(
-        "Microsoft OAuth is not configured (MICROSOFT_CLIENT_ID/SECRET)",
-      ),
-      { statusCode: 503 },
-    );
+    throw serviceUnavailable("Microsoft OAuth is not configured (MICROSOFT_CLIENT_ID/SECRET)");
   }
 }
 
@@ -429,9 +422,7 @@ function frontendRedirect(
 export async function startOAuth(req: Request, res: Response) {
   const provider = req.params.provider as OAuthProvider;
   if (provider !== "gmail" && provider !== "outlook") {
-    throw Object.assign(new Error("Unsupported OAuth provider"), {
-      statusCode: 400,
-    });
+    throw badRequest("Unsupported OAuth provider");
   }
 
   const returnTo =

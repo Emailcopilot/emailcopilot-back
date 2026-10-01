@@ -239,20 +239,32 @@ export const copilotLeadStatusEnum = pgEnum("copilot_lead_status_enum", [
   "failed",
   "bounced",
   "replied",
+  // Permanent cross-copilot dedup: recipient already contacted by another
+  // copilot of the same user, so this row is intentionally never sent.
+  "skipped",
 ]);
 
-export const copilotLeadsTable = pgTable("copilot_leads", {
-  ...defaultColumns(),
-  copilotId: integer().references(() => copilotsTable.id),
-  leadId: integer().references(() => leadsTable.id),
-  status: copilotLeadStatusEnum().notNull().default("new"),
-  currentStep: integer("current_step").notNull().default(0),
-  sentAt: timestamp(),
-  failedAt: timestamp(),
-  repliedAt: timestamp("replied_at"),
-  bouncedAt: timestamp("bounced_at"),
-  errorMessage: text(),
-});
+export const copilotLeadsTable = pgTable(
+  "copilot_leads",
+  {
+    ...defaultColumns(),
+    copilotId: integer().references(() => copilotsTable.id),
+    leadId: integer().references(() => leadsTable.id),
+    status: copilotLeadStatusEnum().notNull().default("new"),
+    currentStep: integer("current_step").notNull().default(0),
+    sentAt: timestamp(),
+    failedAt: timestamp(),
+    repliedAt: timestamp("replied_at"),
+    bouncedAt: timestamp("bounced_at"),
+    errorMessage: text(),
+  },
+  (table) => [
+    index("copilot_leads_copilot_status_idx").on(
+      table.copilotId,
+      table.status,
+    ),
+  ],
+);
 
 export const sentEmailStatusEnum = pgEnum("sent_email_status_enum", [
   "pending",
@@ -379,6 +391,7 @@ export const sentEmailsTable = pgTable(
       table.sentAt,
     ),
     index("sent_emails_status_sent_at_idx").on(table.status, table.sentAt),
+    index("sent_emails_copilot_id_idx").on(table.copilotId),
   ],
 );
 

@@ -8,7 +8,18 @@ import {
   suppressedEmailsTable,
   sentEmailsTable,
 } from "../db/schema";
-import { eq, and, sql, asc, isNotNull, ne, notExists } from "drizzle-orm";
+import {
+  eq,
+  and,
+  sql,
+  asc,
+  isNotNull,
+  ne,
+  notExists,
+  exists,
+  inArray,
+  desc,
+} from "drizzle-orm";
 import type { EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
 import { incrementUsage } from "../lib/helpers";
@@ -139,6 +150,87 @@ export { testMailTransport };
 const randomBetween = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
+// ─── Cross-copilot dedup ─────────────────────────────────────────────────────
+// Permanent per-user policy: once any copilot of a user has successfully
+// delivered to an address, no other copilot of that user may contact it again.
+// Failed sends are excluded so retries stay possible.
+
+const CONTACTED_STATUSES = ["sent", "bounced", "replied"] as const;
+
+/**
+ * Correlated EXISTS fragment: true when the outer `copilot_leads.lead_id`
+ * resolves to an address already contacted by any copilot of `userId`.
+ */
+function alreadyContactedByUser(userId: number) {
+  return exists(
+    db
+      .select({ id: sentEmailsTable.id })
+      .from(sentEmailsTable)
+      .innerJoin(copilotsTable, eq(copilotsTable.id, sentEmailsTable.copilotId))
+      .innerJoin(leadsTable, eq(leadsTable.id, copilotLeadsTable.leadId))
+      .where(
+        and(
+          eq(copilotsTable.userId, userId),
+          inArray(sentEmailsTable.status, [...CONTACTED_STATUSES]),
+          eq(
+            sql`lower(btrim(${leadsTable.email}))`,
+            sql`lower(btrim(${sentEmailsTable.toEmail}))`,
+          ),
+        ),
+      ),
+  );
+}
+
+/**
+ * Layer 1: park pending leads whose address was already contacted by another
+ * copilot of the same user, so they never reach the send query.
+ */
+async function skipAlreadyContacted(
+  copilotId: number,
+  userId: number,
+): Promise<void> {
+  const now = new Date();
+  await db
+    .update(copilotLeadsTable)
+    .set({
+      status: "skipped",
+      errorMessage: "Already contacted through another copilot",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(copilotLeadsTable.copilotId, copilotId),
+        eq(copilotLeadsTable.status, "new"),
+        alreadyContactedByUser(userId),
+      ),
+    );
+}
+
+/**
+ * Layer 2: last line of defence before the SMTP call — covers manual sends,
+ * duplicate lead rows sharing one address and concurrent processes.
+ */
+async function findPriorSendToUser(
+  userId: number,
+  email: string,
+): Promise<{ id: number } | undefined> {
+  const [priorSend] = await db
+    .select({ id: sentEmailsTable.id })
+    .from(sentEmailsTable)
+    .innerJoin(copilotsTable, eq(copilotsTable.id, sentEmailsTable.copilotId))
+    .where(
+      and(
+        eq(copilotsTable.userId, userId),
+        inArray(sentEmailsTable.status, [...CONTACTED_STATUSES]),
+        eq(sql`lower(btrim(${sentEmailsTable.toEmail}))`, email),
+      ),
+    )
+    .orderBy(desc(sentEmailsTable.sentAt))
+    .limit(1);
+
+  return priorSend;
+}
+
 // ─── Send ─────────────────────────────────────────────────────────────────────
 
 async function sendCopilotLead(
@@ -180,6 +272,26 @@ async function sendCopilotLead(
         })
         .where(eq(copilotLeadsTable.id, copilotLeadId));
       return { success: false, error: "Contact is suppressed" };
+    }
+
+    const priorSend = await findPriorSendToUser(
+      copilot.userId,
+      toEmail.trim().toLowerCase(),
+    );
+
+    if (priorSend) {
+      await db
+        .update(copilotLeadsTable)
+        .set({
+          status: "skipped",
+          errorMessage: "Already contacted through another copilot",
+          updatedAt: new Date(),
+        })
+        .where(eq(copilotLeadsTable.id, copilotLeadId));
+      return {
+        success: false,
+        error: "Recipient already contacted by another copilot",
+      };
     }
 
     emailAccountId = account.id;
@@ -324,6 +436,10 @@ async function periodicSend(): Promise<boolean> {
       );
       continue;
     }
+
+    // Permanent cross-copilot dedup: park pending leads whose address was
+    // already contacted by any copilot of this user before picking the next.
+    await skipAlreadyContacted(copilot.id, copilot.userId);
 
     if (!(await canSendForCopilot(copilot.id))) {
       continue;

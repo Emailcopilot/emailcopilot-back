@@ -151,15 +151,16 @@ const randomBetween = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
 // ─── Cross-copilot dedup ─────────────────────────────────────────────────────
-// Permanent per-user policy: once any copilot of a user has successfully
-// delivered to an address, no other copilot of that user may contact it again.
-// Failed sends are excluded so retries stay possible.
+// Permanent per-user policy: once a non-archived copilot of a user has
+// successfully delivered to an address, no other copilot of that user may
+// contact it again. Archived copilots do not count, so their prior sends
+// can be contacted again. Failed sends are excluded so retries stay possible.
 
 const CONTACTED_STATUSES = ["sent", "bounced", "replied"] as const;
 
 /**
  * Correlated EXISTS fragment: true when the outer `copilot_leads.lead_id`
- * resolves to an address already contacted by any copilot of `userId`.
+ * resolves to an address already contacted by a non-archived copilot of `userId`.
  */
 function alreadyContactedByUser(userId: number) {
   return exists(
@@ -171,6 +172,7 @@ function alreadyContactedByUser(userId: number) {
       .where(
         and(
           eq(copilotsTable.userId, userId),
+          ne(copilotsTable.status, "archived"),
           inArray(sentEmailsTable.status, [...CONTACTED_STATUSES]),
           eq(
             sql`lower(btrim(${leadsTable.email}))`,
@@ -183,7 +185,7 @@ function alreadyContactedByUser(userId: number) {
 
 /**
  * Layer 1: park pending leads whose address was already contacted by another
- * copilot of the same user, so they never reach the send query.
+ * non-archived copilot of the same user, so they never reach the send query.
  */
 async function skipAlreadyContacted(
   copilotId: number,
@@ -221,6 +223,7 @@ async function findPriorSendToUser(
     .where(
       and(
         eq(copilotsTable.userId, userId),
+        ne(copilotsTable.status, "archived"),
         inArray(sentEmailsTable.status, [...CONTACTED_STATUSES]),
         eq(sql`lower(btrim(${sentEmailsTable.toEmail}))`, email),
       ),
@@ -438,7 +441,8 @@ async function periodicSend(): Promise<boolean> {
     }
 
     // Permanent cross-copilot dedup: park pending leads whose address was
-    // already contacted by any copilot of this user before picking the next.
+    // already contacted by a non-archived copilot of this user before picking
+    // the next. Sends from archived copilots do not cause a skip.
     await skipAlreadyContacted(copilot.id, copilot.userId);
 
     if (!(await canSendForCopilot(copilot.id))) {

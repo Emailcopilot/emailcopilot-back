@@ -2,14 +2,16 @@
 
 ## Core Commands
 
-| Command | Purpose |
-|---------|---------|
-| `pnpm dev` | Start dev server with hot reload |
-| `pnpm build` | Compile TypeScript to `dist/` |
-| `pnpm start` | Run production build |
-| `pnpm db:push` | Push schema changes to DB (REQUIRED after schema changes) |
-| `pnpm db:studio` | Open Drizzle Studio GUI |
-| `pnpm db:generate` | Generate migration files |
+
+| Command            | Purpose                          |
+| ------------------ | -------------------------------- |
+| `pnpm dev`         | Start dev server with hot reload |
+| `pnpm build`       | Compile TypeScript to `dist/`    |
+| `pnpm start`       | Run production build             |
+| `pnpm db:push`     | Push schema changes to DB        |
+| `pnpm db:studio`   | Open Drizzle Studio GUI          |
+| `pnpm db:generate` | Generate migration files         |
+
 
 ## Stack
 
@@ -19,6 +21,8 @@
 - **Payments**: Mollie
 - **Scraping**: Playwright + puppeteer-extra-plugin-stealth (`src/scraping/`)
 - **Validation**: Zod
+
+
 
 ## Route / Service Pattern (Express 5)
 
@@ -39,11 +43,14 @@ export async function listLeads(req: Request, res: Response) {
 ```
 
 Notes:
+
 - Throw `HttpError`s from `src/lib/http-error.ts` for HTTP errors:
-  `throw notFound("Lead not found")` (helpers: `badRequest` 400, `forbidden` 403,
-  `notFound` 404, `serviceUnavailable` 503, or `new HttpError(status, message)`).
+`throw notFound("Lead not found")` (helpers: `badRequest` 400, `forbidden` 403,
+`notFound` 404, `serviceUnavailable` 503, or `new HttpError(status, message)`).
 - `validate()` replaces `req.body` / `req.params`; for `query` it redefines the property (Express 5 `req.query` is read-only).
 - Special cases (e.g. Mollie webhook plain-text 500 for retries) may catch locally inside the service handler.
+
+
 
 ## Required Env Variables
 
@@ -54,6 +61,8 @@ MOLLIE_API_KEY=m_test_...
 ALLOWED_ORIGIN=http://localhost:3000
 PORT=3001
 ```
+
+
 
 ## Project Structure
 
@@ -69,7 +78,11 @@ src/
 └── types/           # TypeScript augmentations
 ```
 
+
+
 ## Important Notes
+
+
 
 ### Scraping (`src/scraping/`)
 
@@ -86,25 +99,23 @@ Flow: `runScraping` → `resolveNextCopilot` → `listGoogleMapsListings` → in
 - Activate a copilot (`status: active`) or `POST /copilots/:id/run` to enqueue it
 - `sendLimit` from copilot controls daily scrape/email budget
 
+
+
 ### Lead Status Values (`leads` / `copilot_leads`)
 
-| Status | Description |
-|--------|-------------|
-| `new` | Lead ready to email (`copilot_leads`) |
-| `sent` | Email sent successfully |
-| `success` / `fail` | Scrape outcome on `leads` |
+
+| Status             | Description                           |
+| ------------------ | ------------------------------------- |
+| `new`              | Lead ready to email (`copilot_leads`) |
+| `sent`             | Email sent successfully               |
+| `success` / `fail` | Scrape outcome on `leads`             |
+
+
+
 
 ## DB Schema Changes
 
-After modifying `src/db/schema.ts`, you MUST run:
-```bash
-pnpm db:push
-```
-
-Recent changes requiring push:
-- Email column made nullable (remove `.notNull()`)
-- Website unique constraint removed (remove `.unique()`)
-- Added "pending_email" to lead status enum
+After modifying `src/db/schema.ts`, you musn't run any db generation or migration.
 
 ## Docker
 
@@ -112,8 +123,11 @@ Recent changes requiring push:
 - **Sync with package.json**: Update both when upgrading Playwright version
 - docker-compose expects `.env` at project root
 
+
+
 ## Known Issues
 
 - `zod: ^4.4.3` in package.json — v4 is not stable; should likely be `^3.x`
 - No test framework configured
 - No ESLint/Prettier setup
+

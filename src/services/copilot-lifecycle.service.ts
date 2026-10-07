@@ -5,12 +5,12 @@ import {
   leadsTable,
   scrapeJobsTable,
   subscriptionsTable,
-  usageTable,
   flightScheduleTable,
 } from "../db/schema";
 import type { Copilot, FlightSchedule } from "../db/schema";
-import { and, asc, count, desc, eq, gte, isNotNull, lt, lte, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, lt, ne } from "drizzle-orm";
 import { getPlan, isSubscriptionUsable } from "../lib/billing";
+import { ensureCurrentUsagePeriod } from "../lib/helpers";
 import {
   getCopilotDayBounds,
   isWithinSendWindow,
@@ -76,19 +76,7 @@ export async function getActiveSubscription(
     return null;
   }
 
-  const now = new Date();
-  const [currentUsage] = await db
-    .select()
-    .from(usageTable)
-    .where(
-      and(
-        eq(usageTable.userId, userId),
-        eq(usageTable.subscriptionId, subscription.id),
-        lte(usageTable.periodStart, now),
-        gte(usageTable.periodEnd, now),
-      ),
-    )
-    .limit(1);
+  const currentUsage = await ensureCurrentUsagePeriod(userId, subscription.id);
 
   const totalEmailsSent = currentUsage?.emailsSent ?? 0;
   const remainingEmails = Math.max(0, plan.maxEmailsPerMonth - totalEmailsSent);

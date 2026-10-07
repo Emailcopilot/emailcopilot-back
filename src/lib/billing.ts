@@ -1,4 +1,17 @@
 export type PlanId = "starter" | "growth" | "scale";
+export type BillingInterval = "month" | "year";
+
+/** Annual checkout is one charge of monthly × 12 × 0.8 (save 20%). */
+const ANNUAL_DISCOUNT = 0.8;
+
+function annualCharge(monthlyPrice: number) {
+  const price = Math.round(monthlyPrice * 12 * ANNUAL_DISCOUNT * 100) / 100;
+  return {
+    price,
+    amount: price.toFixed(2),
+    interval: "12 months" as const,
+  };
+}
 
 export const PLANS = [
   {
@@ -7,6 +20,7 @@ export const PLANS = [
     price: 9,
     amount: "9.00",
     interval: "1 month",
+    annual: annualCharge(9),
     currency: "EUR",
     maxEmailsPerMonth: 250,
     maxCopilots: 1,
@@ -25,6 +39,7 @@ export const PLANS = [
     price: 19,
     amount: "19.00",
     interval: "1 month",
+    annual: annualCharge(19),
     currency: "EUR",
     maxEmailsPerMonth: 750,
     maxCopilots: 3,
@@ -44,6 +59,7 @@ export const PLANS = [
     price: 39,
     amount: "39.00",
     interval: "1 month",
+    annual: annualCharge(39),
     currency: "EUR",
     maxEmailsPerMonth: 2000,
     maxCopilots: null as number | null, // unlimited
@@ -91,8 +107,56 @@ export const PLAN_LIMITS: Record<
   },
 };
 
+export type Plan = (typeof PLANS)[number];
+
 export function getPlan(planId: string) {
   return PLANS.find((p) => p.id === planId) ?? null;
+}
+
+export function parseBillingInterval(value: unknown): BillingInterval {
+  return value === "year" ? "year" : "month";
+}
+
+/** Mollie amount and interval for a plan at the chosen billing cadence. */
+export function getPlanCharge(plan: Plan, interval: BillingInterval) {
+  if (interval === "year") {
+    return {
+      currency: plan.currency,
+      price: plan.annual.price,
+      amount: plan.annual.amount,
+      interval: plan.annual.interval,
+    };
+  }
+  return {
+    currency: plan.currency,
+    price: plan.price,
+    amount: plan.amount,
+    interval: plan.interval,
+  };
+}
+
+export function chargeDescription(planName: string, interval: BillingInterval) {
+  return interval === "year" ? `${planName} (annual)` : planName;
+}
+
+export function addMonths(date: Date, months: number): Date {
+  const next = new Date(date);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
+
+/**
+ * Month-sized usage window that contains `now`, stepped from the billing anchor.
+ * Email quotas stay monthly even when the subscription is billed annually.
+ */
+export function monthlyUsageWindow(anchor: Date, now: Date) {
+  let periodStart = new Date(anchor);
+  let periodEnd = addMonths(periodStart, 1);
+  while (now > periodEnd) {
+    periodStart = periodEnd;
+    periodEnd = addMonths(periodStart, 1);
+  }
+  return { periodStart, periodEnd };
 }
 
 export function getPlanLimits(planId: string) {

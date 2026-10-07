@@ -6,6 +6,7 @@ import {
 } from "playwright";
 import stealthPlugin from "puppeteer-extra-plugin-stealth";
 import { readFileSync, writeFileSync } from "fs";
+import { normalizeScrapedEmail } from "./normalize-scraped-email";
 
 stealthChromium.use(stealthPlugin());
 
@@ -321,8 +322,8 @@ function decodeEmailCandidate(value) {
     ".",
   );
   decoded = decoded.replace(/\s+/g, "");
-  const match = decoded.match(EMAIL_REGEX);
-  return match ? match[0].toLowerCase() : null;
+  const match = decoded.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  return match ? normalizeScrapedEmail(match[0]) : null;
 }
 
 function isJunkEmail(email) {

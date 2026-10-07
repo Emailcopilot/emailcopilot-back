@@ -403,6 +403,7 @@ export const subscriptionsTable = pgTable("subscriptions", {
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
   planId: varchar("plan_id", { length: 50 }).notNull(),
+  billingInterval: varchar("billing_interval", { length: 10 }).notNull().default("month"),
   status: subscriptionStatusEnum("status").notNull().default("pending"),
   mollieCustomerId: varchar("mollie_customer_id", { length: 255 }),
   mollieSubscriptionId: varchar("mollie_subscription_id", { length: 255 }),

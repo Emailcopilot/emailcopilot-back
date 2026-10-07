@@ -8,18 +8,24 @@ import {
   copilotsTable,
   emailAccountTable,
 } from "../db/schema";
-import { eq, desc, and, lte, gte, ne, count } from "drizzle-orm";
+import { eq, desc, and, ne, count } from "drizzle-orm";
 import createMollieClient, {
   MollieClient,
   SequenceType,
 } from "@mollie/api-client";
 import {
   PLANS,
+  addMonths,
+  chargeDescription,
   getPlan,
+  getPlanCharge,
   getPlanLimits,
   isSubscriptionUsable,
+  parseBillingInterval,
+  type BillingInterval,
 } from "../lib/billing";
 import type { SubscribeInput } from "../validators/billing.validator";
+import { ensureCurrentUsagePeriod } from "../lib/helpers";
 import { badRequest, notFound } from "../lib/http-error";
 
 const mollie: MollieClient = createMollieClient({
@@ -77,10 +83,11 @@ export async function listInvoices(req: Request, res: Response) {
 
 export async function subscribe(req: Request, res: Response) {
   const user = req.dbUser! as DbUser;
-  const { planId } = req.body as SubscribeInput;
+  const { planId, interval } = req.body as SubscribeInput;
   const plan = getPlan(planId)!;
+  const charge = getPlanCharge(plan, interval);
 
-  console.log(`User ${user.email} subscribing to ${planId}`);
+  console.log(`User ${user.email} subscribing to ${planId} (${interval})`);
 
   const [existingSub] = await db
     .select()
@@ -106,13 +113,13 @@ export async function subscribe(req: Request, res: Response) {
 
   // First payment creates the mandate for future recurring charges
   const payment = await mollie.payments.create({
-    amount: { currency: plan.currency, value: plan.amount },
+    amount: { currency: charge.currency, value: charge.amount },
     customerId: mollieCustomerId,
     sequenceType: SequenceType.first,
-    description: `${plan.name}`,
+    description: chargeDescription(plan.name, interval),
     redirectUrl: `${process.env.FRONTEND_URL}/dashboard/copilots`,
     webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
-    metadata: { planId, userId: String(user.id) },
+    metadata: { planId, userId: String(user.id), interval },
   });
 
   console.log(`Mollie payment created: ${payment.id} for user ${user.email}`);
@@ -125,7 +132,9 @@ export async function subscribe(req: Request, res: Response) {
       const [updated] = await tx
         .update(subscriptionsTable)
         .set({
-          ...(stillUsable ? {} : { planId, mollieSubscriptionId: null }),
+          ...(stillUsable
+            ? {}
+            : { planId, billingInterval: interval, mollieSubscriptionId: null }),
           status: stillUsable ? "active" : "pending",
           mollieCustomerId,
           cancelAtPeriodEnd: false,
@@ -140,6 +149,7 @@ export async function subscribe(req: Request, res: Response) {
         .values({
           userId: user.id,
           planId,
+          billingInterval: interval,
           status: "pending",
           mollieCustomerId,
         })
@@ -151,8 +161,8 @@ export async function subscribe(req: Request, res: Response) {
       userId: user.id,
       subscriptionId,
       molliePaymentId: payment.id,
-      amount: Math.round(plan.price * 100),
-      currency: plan.currency.toLowerCase(),
+      amount: Math.round(charge.price * 100),
+      currency: charge.currency.toLowerCase(),
       status: "pending",
       downloadUrl: payment.getCheckoutUrl() ?? undefined,
     });
@@ -233,19 +243,7 @@ export async function getLimits(req: Request, res: Response) {
     throw badRequest("Unknown plan");
   }
 
-  const now = new Date();
-  const [currentUsage] = await db
-    .select()
-    .from(usageTable)
-    .where(
-      and(
-        eq(usageTable.userId, userId),
-        eq(usageTable.subscriptionId, sub.id),
-        lte(usageTable.periodStart, now),
-        gte(usageTable.periodEnd, now),
-      ),
-    )
-    .limit(1);
+  const currentUsage = await ensureCurrentUsagePeriod(userId, sub.id);
 
   const [{ copilotsCount }] = await db
     .select({ copilotsCount: count(copilotsTable.id) })
@@ -304,7 +302,7 @@ async function processWebhookPayment(id: string) {
   if (id.startsWith("tr_")) {
     const payment = await mollie.payments.get(id);
     const meta = payment.metadata as
-      | { planId?: string; userId?: string }
+      | { planId?: string; userId?: string; interval?: string }
       | undefined;
     const userId = meta?.userId ? parseInt(meta.userId) : null;
     const planId = meta?.planId;
@@ -373,16 +371,19 @@ async function cancelMollieSubscription(customerId: string, subscriptionId: stri
 async function ensureMollieRecurringSubscription(opts: {
   customerId: string;
   plan: NonNullable<ReturnType<typeof getPlan>>;
+  interval: BillingInterval;
   userId: number;
   startDate: string;
 }): Promise<string | null> {
-  const { customerId, plan, userId, startDate } = opts;
+  const { customerId, plan, interval, userId, startDate } = opts;
+  const charge = getPlanCharge(plan, interval);
   const existing = await mollie.customerSubscriptions.page({ customerId });
   const live = existing.filter(
     (s: { status: string }) => s.status === "active" || s.status === "pending",
   );
   const matching = live.find(
-    (s: { amount?: { value?: string } }) => s.amount?.value === plan.amount,
+    (s: { amount?: { value?: string }; interval?: string }) =>
+      s.amount?.value === charge.amount && s.interval === charge.interval,
   );
 
   if (matching) {
@@ -403,12 +404,12 @@ async function ensureMollieRecurringSubscription(opts: {
 
   const mollieSub = await mollie.customerSubscriptions.create({
     customerId,
-    amount: { currency: plan.currency, value: plan.amount },
-    interval: plan.interval,
+    amount: { currency: charge.currency, value: charge.amount },
+    interval: charge.interval,
     startDate,
-    description: `${plan.name}`,
+    description: chargeDescription(plan.name, interval),
     webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
-    metadata: { planId: plan.id, userId: String(userId) },
+    metadata: { planId: plan.id, userId: String(userId), interval },
   });
   console.log(
     `✅ Mollie subscription created: ${mollieSub.id} for user ${userId} (startDate=${startDate})`,
@@ -447,14 +448,23 @@ async function handleSuccessfulPayment(
       return;
     }
 
+    // First payments carry interval in metadata. Recurring charges fall back
+    // to the interval stored on the subscription.
+    const meta = payment.metadata as { interval?: string } | undefined;
+    const interval: BillingInterval =
+      meta?.interval === "month" || meta?.interval === "year"
+        ? meta.interval
+        : parseBillingInterval(sub.billingInterval);
+    const charge = getPlanCharge(plan, interval);
+
     if (!existingInvoice) {
       console.log(`🔄 Recording payment for user ${userId}, plan ${plan.id}`);
       await tx.insert(invoicesTable).values({
         userId,
         subscriptionId: sub.id,
         molliePaymentId: payment.id,
-        amount: Math.round(plan.price * 100),
-        currency: plan.currency.toLowerCase(),
+        amount: Math.round(charge.price * 100),
+        currency: charge.currency.toLowerCase(),
         status: "paid",
         paidAt: new Date(),
       });
@@ -470,16 +480,17 @@ async function handleSuccessfulPayment(
         .where(eq(invoicesTable.molliePaymentId, payment.id));
     }
 
-    // Renew the billing period on every successful payment (first or recurring)
+    // Renew access for 1 month or 12 months. Email usage stays a 1-month window.
     const now = new Date();
-    const periodEnd = new Date(now);
-    periodEnd.setMonth(periodEnd.getMonth() + 1);
+    const periodEnd = addMonths(now, interval === "year" ? 12 : 1);
+    const usagePeriodEnd = addMonths(now, 1);
 
     let mollieSubscriptionId = sub.mollieSubscriptionId;
     if (payment.customerId) {
       const ensured = await ensureMollieRecurringSubscription({
         customerId: payment.customerId,
         plan,
+        interval,
         userId,
         startDate: periodEnd.toISOString().slice(0, 10),
       });
@@ -490,6 +501,7 @@ async function handleSuccessfulPayment(
       .update(subscriptionsTable)
       .set({
         planId: plan.id,
+        billingInterval: interval,
         status: "active",
         mollieMandateId: sub.mollieMandateId || payment.mandateId,
         mollieSubscriptionId,
@@ -500,8 +512,7 @@ async function handleSuccessfulPayment(
       })
       .where(eq(subscriptionsTable.userId, userId));
 
-    // Reset usage for the new period
-    await ensureUsageRecord(tx, userId, sub.id, now, periodEnd);
+    await ensureUsageRecord(tx, userId, sub.id, now, usagePeriodEnd);
   });
 }
 

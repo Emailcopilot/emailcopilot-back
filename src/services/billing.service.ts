@@ -4,7 +4,6 @@ import {
   subscriptionsTable,
   invoicesTable,
   usersTable,
-  usageTable,
   copilotsTable,
   emailAccountTable,
 } from "../db/schema";
@@ -25,7 +24,7 @@ import {
   type BillingInterval,
 } from "../lib/billing";
 import type { SubscribeInput } from "../validators/billing.validator";
-import { ensureCurrentUsagePeriod } from "../lib/helpers";
+import { ensureCurrentUsagePeriod, reuseOrCreateUsagePeriod } from "../lib/helpers";
 import { badRequest, notFound } from "../lib/http-error";
 
 const mollie: MollieClient = createMollieClient({
@@ -432,7 +431,8 @@ async function handleSuccessfulPayment(
       .select()
       .from(subscriptionsTable)
       .where(eq(subscriptionsTable.userId, userId))
-      .limit(1);
+      .limit(1)
+      .for("update");
 
     if (!sub) return;
 
@@ -442,12 +442,6 @@ async function handleSuccessfulPayment(
       .where(eq(invoicesTable.molliePaymentId, payment.id))
       .limit(1);
 
-    // Idempotency: same payment already fully processed → no-op on Mollie retries
-    if (existingInvoice?.status === "paid" && sub.mollieSubscriptionId) {
-      console.log(`⏭️  Skipping already-processed payment ${payment.id}`);
-      return;
-    }
-
     // First payments carry interval in metadata. Recurring charges fall back
     // to the interval stored on the subscription.
     const meta = payment.metadata as { interval?: string } | undefined;
@@ -456,6 +450,34 @@ async function handleSuccessfulPayment(
         ? meta.interval
         : parseBillingInterval(sub.billingInterval);
     const charge = getPlanCharge(plan, interval);
+
+    // Renew access for 1 month or 12 months. Email usage stays a 1-month window.
+    const now = new Date();
+    const periodEnd = addMonths(now, interval === "year" ? 12 : 1);
+    const usagePeriodEnd = addMonths(now, 1);
+
+    // Same payment already recorded. Do not shift the period or open another
+    // usage row. Still attach a recurring Mollie subscription if that step was missed.
+    if (existingInvoice?.status === "paid") {
+      if (!sub.mollieSubscriptionId && payment.customerId) {
+        const ensured = await ensureMollieRecurringSubscription({
+          customerId: payment.customerId,
+          plan,
+          interval,
+          userId,
+          startDate: (sub.currentPeriodEnd ?? periodEnd).toISOString().slice(0, 10),
+        });
+        if (ensured) {
+          await tx
+            .update(subscriptionsTable)
+            .set({ mollieSubscriptionId: ensured, updatedAt: now })
+            .where(eq(subscriptionsTable.id, sub.id));
+        }
+      } else {
+        console.log(`⏭️  Skipping already-processed payment ${payment.id}`);
+      }
+      return;
+    }
 
     if (!existingInvoice) {
       console.log(`🔄 Recording payment for user ${userId}, plan ${plan.id}`);
@@ -468,7 +490,7 @@ async function handleSuccessfulPayment(
         status: "paid",
         paidAt: new Date(),
       });
-    } else if (existingInvoice.status !== "paid") {
+    } else {
       // First payment: mark the pending invoice created during /subscribe as paid
       await tx
         .update(invoicesTable)
@@ -479,11 +501,6 @@ async function handleSuccessfulPayment(
         })
         .where(eq(invoicesTable.molliePaymentId, payment.id));
     }
-
-    // Renew access for 1 month or 12 months. Email usage stays a 1-month window.
-    const now = new Date();
-    const periodEnd = addMonths(now, interval === "year" ? 12 : 1);
-    const usagePeriodEnd = addMonths(now, 1);
 
     let mollieSubscriptionId = sub.mollieSubscriptionId;
     if (payment.customerId) {
@@ -512,7 +529,7 @@ async function handleSuccessfulPayment(
       })
       .where(eq(subscriptionsTable.userId, userId));
 
-    await ensureUsageRecord(tx, userId, sub.id, now, usagePeriodEnd);
+    await reuseOrCreateUsagePeriod(tx, userId, sub.id, now, usagePeriodEnd);
   });
 }
 
@@ -566,44 +583,4 @@ async function handleSubscriptionWebhook(subscriptionId: string) {
       err,
     );
   }
-}
-
-async function ensureUsageRecord(
-  tx: any,
-  userId: number,
-  subscriptionId: number,
-  periodStart: Date,
-  periodEnd: Date,
-) {
-  const [existing] = await tx
-    .select()
-    .from(usageTable)
-    .where(
-      and(
-        eq(usageTable.userId, userId),
-        eq(usageTable.subscriptionId, subscriptionId),
-        eq(usageTable.periodStart, periodStart),
-      ),
-    )
-    .limit(1);
-
-  if (existing) return existing;
-
-  const [newUsage] = await tx
-    .insert(usageTable)
-    .values({
-      userId,
-      subscriptionId,
-      periodStart,
-      periodEnd,
-      emailsSent: 0,
-      copilotsCreated: 0,
-      emailAccountsCreated: 0,
-    })
-    .returning();
-
-  console.log(
-    `✅ Created usage record for user ${userId}, period ${periodStart.toISOString()}`,
-  );
-  return newUsage;
 }

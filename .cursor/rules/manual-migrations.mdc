@@ -1,0 +1,16 @@
+---
+description: Database migrations are written and run by the user, never by the agent
+alwaysApply: true
+---
+
+# Manual migrations
+
+Do not generate or apply database migrations. After changing `src/db/schema.ts`, stop and tell the user what SQL they need.
+
+- Never run `pnpm db:generate`, `pnpm db:push`, `pnpm db:migrate`, `pnpm db`, or `drizzle-kit`
+- Never add or edit files under `migrations/`
+
+```sql
+-- The user writes and runs this. The agent does not.
+ALTER TABLE example ADD COLUMN example_flag boolean NOT NULL DEFAULT false;
+```

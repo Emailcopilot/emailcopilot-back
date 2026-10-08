@@ -115,7 +115,11 @@ Flow: `runScraping` → `resolveNextCopilot` → `listGoogleMapsListings` → in
 
 ## DB Schema Changes
 
-After modifying `src/db/schema.ts`, you musn't run any db generation or migration.
+Schema edits in `src/db/schema.ts` stay in code until the user migrates. Do not generate, edit, or apply migrations.
+
+- Never run `pnpm db:generate`, `pnpm db:push`, `pnpm db:migrate`, `pnpm db`, or `drizzle-kit`
+- Never add or edit files under `migrations/`
+- Describe the SQL the user should write and run themselves
 
 ## Docker
 

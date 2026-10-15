@@ -28,5 +28,6 @@ copilotsRouter.patch(
   copilotService.updateCopilotStatus,
 );
 copilotsRouter.post("/:id/run", copilotService.runCopilot);
+copilotsRouter.post("/:id/test-email", copilotService.sendTestEmail);
 copilotsRouter.get("/:id/status", copilotService.getCopilotStatus);
 copilotsRouter.post("/:id/duplicate", copilotService.duplicateCopilot);

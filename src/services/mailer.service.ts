@@ -7,6 +7,7 @@ import {
   leadsTable,
   suppressedEmailsTable,
   sentEmailsTable,
+  type EmailAccount,
 } from "../db/schema";
 import {
   eq,
@@ -113,6 +114,41 @@ function interpolate(text: string, lead: LeadLike, sendName: string): string {
     .replace(/{{website}}/g, lead.website ?? "")
     .replace(/{{phone}}/g, lead.phone ?? "")
     .replace(/{{senderName}}/g, sendName);
+}
+
+const TEST_LEAD = {
+  companyName: "Acme Test Co",
+  website: "https://example.com",
+  phone: "+1 555 0100",
+};
+
+/** Preview send to the account's own inbox. Does not record a lead or count usage. */
+export async function sendCopilotTestEmail(
+  account: EmailAccount,
+  template: EmailTemplate,
+): Promise<{ to: string; subject: string; messageId?: string }> {
+  const mail = await resolveMailTransport(account);
+  const lead: LeadLike = {
+    companyName: TEST_LEAD.companyName,
+    email: mail.email,
+    website: TEST_LEAD.website,
+    phone: TEST_LEAD.phone,
+  };
+  const subject = `[Test] ${interpolate(template.subject ?? "", lead, mail.sendName)}`;
+  const body = interpolate(template.body ?? "", lead, mail.sendName);
+
+  const info = await mail.transporter.sendMail({
+    from: `"${mail.sendName}" <${mail.email}>`,
+    to: mail.email,
+    subject,
+    html: body,
+  });
+
+  return {
+    to: mail.email,
+    subject,
+    messageId: info.messageId ?? undefined,
+  };
 }
 
 const MIN_SEND_INTERVAL_MS = 2 * 60 * 1000;

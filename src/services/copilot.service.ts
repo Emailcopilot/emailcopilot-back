@@ -17,6 +17,7 @@ import {
   getCopilotNewLeadCount,
   getCopilotSentTodayCount,
 } from "./copilot-lifecycle.service";
+import { sendCopilotTestEmail } from "./mailer.service";
 import type {
   CreateCopilotInput,
   UpdateCopilotInput,
@@ -624,6 +625,87 @@ export async function runCopilot(req: Request<{ id: string }>, res: Response) {
     copilotId: id,
     status: updated.status,
   });
+}
+
+export async function sendTestEmail(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
+  const [copilot] = await db
+    .select()
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
+
+  if (!copilot) {
+    throw notFound("Copilot not found");
+  }
+
+  const emailAccountId = copilot.emailAccountId;
+  const templateId = copilot.templateId;
+  const missing: string[] = [];
+  if (!emailAccountId) missing.push("email account");
+  if (!templateId) missing.push("template");
+  if (!emailAccountId || !templateId) {
+    throw badRequest(`Cannot send test email. Missing: ${missing.join(", ")}`);
+  }
+
+  const [account] = await db
+    .select()
+    .from(emailAccountTable)
+    .where(
+      and(
+        eq(emailAccountTable.id, emailAccountId),
+        eq(emailAccountTable.userId, userId),
+      ),
+    );
+
+  if (!account?.email) {
+    throw badRequest("Email account is not properly configured");
+  }
+
+  const isOauth =
+    account.provider === "gmail" || account.provider === "outlook";
+  if (isOauth) {
+    if (!account.oauthRefreshToken && !account.oauthAccessToken) {
+      throw badRequest(
+        "Email account OAuth tokens are missing — reconnect the account",
+      );
+    }
+  } else if (!account.smtpHost || !account.smtpPass) {
+    throw badRequest("Email account is not properly configured");
+  }
+
+  if (account.smtpStatus === "error") {
+    throw badRequest(
+      "Email account SMTP is in error state — verify or reconnect",
+    );
+  }
+
+  const [template] = await db
+    .select()
+    .from(emailTemplatesTable)
+    .where(
+      and(
+        eq(emailTemplatesTable.id, templateId),
+        eq(emailTemplatesTable.userId, userId),
+      ),
+    );
+
+  if (!template) {
+    throw badRequest("Template not found");
+  }
+
+  try {
+    const result = await sendCopilotTestEmail(account, template);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to send test email";
+    throw badRequest(message);
+  }
 }
 
 export async function getCopilotStatus(

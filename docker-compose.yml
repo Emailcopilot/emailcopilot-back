@@ -16,8 +16,8 @@ services:
     restart: always
     env_file:
       - .env
-    ports:
-      - "3001:3001"
+    # ports:
+    #   - "3001:3001"
 
   caddy:
     image: caddy:latest

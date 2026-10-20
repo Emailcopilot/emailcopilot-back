@@ -1,13 +1,17 @@
-import dotenv from "dotenv";
-dotenv.config();
-import createMollieClient, { MollieClient } from "@mollie/api-client";
+import { sendTemplateEmail } from "./src/mailer";
 
-const mollie: MollieClient = createMollieClient({
-  apiKey: process.env.MOLLIE_API_KEY!,
-});
+async function main() {
+  await sendTemplateEmail(
+    "test@test.com",
+    "Test Email",
+    "copilot-landed",
+    {
+      firstName: "John",
+      copilotName: "Copilot 1",
+      emailsSent: "100",
+      targetAudienceName: "Target Audience 1",
+    }
+  );
+}
 
-mollie.payments.get("tr_keHXjtLtCv5bDgQFtuUVJ").then((payment) => {
-    console.log(payment);
-    
-    console.log(payment._links);
-});
+main();

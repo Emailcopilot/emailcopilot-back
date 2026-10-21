@@ -8,7 +8,7 @@ import {
   suppressedEmailsTable,
 } from "../db/schema";
 import { db } from "../db/drizzle";
-import { eq, desc, and, ilike, getTableColumns, isNotNull, sql } from "drizzle-orm";
+import { eq, desc, and, or, ilike, getTableColumns, isNotNull, sql } from "drizzle-orm";
 import type {
   ListLeadsInput,
   UpdateLeadSuppressionInput,
@@ -21,26 +21,26 @@ const escapeLike = (value: string) =>
   value.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 export async function listLeads(req: Request, res: Response) {
-  const { page, limit, copilotId, companyName, email, website, phone } =
+  const { page, limit, copilotId, search } =
     req.query as unknown as ListLeadsInput;
   const userId = req.dbUser!.id;
   const offset = (page - 1) * limit;
 
-  // Each column has its own query param; AND them together when provided.
-  const searchFilters = [
-    companyName
-      ? ilike(leadsTable.companyName, `%${escapeLike(companyName)}%`)
-      : undefined,
-    email ? ilike(leadsTable.email, `%${escapeLike(email)}%`) : undefined,
-    website ? ilike(leadsTable.website, `%${escapeLike(website)}%`) : undefined,
-    phone ? ilike(leadsTable.phone, `%${escapeLike(phone)}%`) : undefined,
-  ];
+  const pattern = search ? `%${escapeLike(search)}%` : undefined;
+  const searchFilter = pattern
+    ? or(
+        ilike(leadsTable.companyName, pattern),
+        ilike(leadsTable.email, pattern),
+        ilike(leadsTable.website, pattern),
+        ilike(leadsTable.phone, pattern),
+      )
+    : undefined;
 
   const where = and(
     eq(copilotsTable.userId, userId),
     isNotNull(leadsTable.id),
     copilotId ? eq(copilotLeadsTable.copilotId, copilotId) : undefined,
-    ...searchFilters,
+    searchFilter,
   );
 
   const query = () =>

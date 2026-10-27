@@ -24,7 +24,11 @@ export const sendEmail = async (
     };
     const info = await transporter.sendMail(mailOptions);
     const url = nodemailer.getTestMessageUrl(info);
-    console.log('Test email URL:', url);
+    if (url) {
+        console.log('Test email URL:', url);
+    } else {
+        console.log('Email sent successfully', info);
+    }
 };
 
 const BASE_MAIL_TEMPLATE = 'base-mail.html';

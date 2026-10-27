@@ -6,11 +6,14 @@ import {
   scrapeJobsTable,
   subscriptionsTable,
   flightScheduleTable,
+  usersTable,
+  targetAudienceTable,
 } from "../db/schema";
 import type { Copilot, FlightSchedule } from "../db/schema";
 import { and, asc, count, desc, eq, gte, isNotNull, lt, ne } from "drizzle-orm";
 import { getPlan, isSubscriptionUsable } from "../lib/billing";
 import { ensureCurrentUsagePeriod } from "../lib/helpers";
+import { sendTemplateEmail } from "../mailer";
 import {
   getCopilotDayBounds,
   isWithinSendWindow,
@@ -286,15 +289,61 @@ export async function pauseCopilot(copilotId: number, reason: string) {
 }
 
 export async function completeCopilot(copilotId: number) {
-  await db
+  const [copilot] = await db
     .update(copilotsTable)
     .set({
       status: "completed",
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(eq(copilotsTable.id, copilotId));
+    .where(eq(copilotsTable.id, copilotId))
+    .returning();
   console.log(`✅ Copilot ${copilotId} completed`);
+
+  if (copilot) {
+    await notifyCopilotFinished(copilot);
+  }
+}
+
+async function notifyCopilotFinished(copilot: Copilot) {
+  const [user] = await db
+    .select({ email: usersTable.email, firstName: usersTable.firstName })
+    .from(usersTable)
+    .where(eq(usersTable.id, copilot.userId));
+
+  if (!user?.email) {
+    return;
+  }
+
+  let targetAudienceName = "your target audience";
+  if (copilot.targetAudienceId) {
+    const [audience] = await db
+      .select({ name: targetAudienceTable.name })
+      .from(targetAudienceTable)
+      .where(eq(targetAudienceTable.id, copilot.targetAudienceId));
+    if (audience?.name) {
+      targetAudienceName = audience.name;
+    }
+  }
+
+  try {
+    await sendTemplateEmail(
+      user.email,
+      `${copilot.name} has landed`,
+      "copilot-landed",
+      {
+        firstName: user.firstName || "there",
+        copilotName: copilot.name,
+        emailsSent: String(copilot.emailsSent),
+        targetAudienceName,
+      },
+    );
+  } catch (error) {
+    console.error(
+      `Failed to send finished email for copilot ${copilot.id}:`,
+      error,
+    );
+  }
 }
 
 async function resolveCopilotWithPendingScrapeJob(): Promise<Copilot | null> {

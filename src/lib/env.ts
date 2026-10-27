@@ -20,3 +20,7 @@ export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 export const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID ?? "";
 export const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET ?? "";
 export const MICROSOFT_TENANT_ID = process.env.MICROSOFT_TENANT_ID ?? "common";
+
+
+export const SMTP_URL = process.env.SMTP_URL!;
+export const MAILER_FROM = process.env.MAILER_FROM!;

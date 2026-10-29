@@ -72,6 +72,7 @@ export const updateCopilotSchema = createCopilotSchema.partial().extend({
   emailAccountId: optionalRelationIdSchema,
   templateId: optionalRelationIdSchema,
   targetAudienceId: optionalRelationIdSchema,
+  flightScheduleId: optionalRelationIdSchema,
 });
 
 export const updateCopilotStatusSchema = z.object({

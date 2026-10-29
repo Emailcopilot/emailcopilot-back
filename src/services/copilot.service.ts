@@ -253,10 +253,10 @@ export async function createCopilot(req: Request, res: Response) {
       templateData = createdTemplate;
     }
 
-    if (!flightScheduleId) {
+    if (!flightScheduleId && flightSchedule) {
       const [schedule] = await tx
         .insert(flightScheduleTable)
-        .values({ ...(flightSchedule ?? {}), userId })
+        .values({ ...flightSchedule, userId })
         .returning();
       flightScheduleId = schedule.id;
       flightScheduleData = schedule;
@@ -396,8 +396,8 @@ export async function updateCopilot(
       targetAudienceId = existing.targetAudienceId;
     if (emailAccountId === undefined) emailAccountId = existing.emailAccountId;
     if (templateId === undefined) templateId = existing.templateId;
-
-    flightScheduleId = flightScheduleId ?? existing.flightScheduleId ?? null;
+    if (flightScheduleId === undefined)
+      flightScheduleId = existing.flightScheduleId ?? null;
 
     if (flightSchedule) {
       if (flightScheduleId) {

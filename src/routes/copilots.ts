@@ -22,6 +22,7 @@ copilotsRouter.put(
   copilotService.updateCopilot,
 );
 copilotsRouter.delete("/:id", copilotService.deleteCopilot);
+copilotsRouter.get("/:id/test-email", copilotService.getCopilotTestEmail);
 copilotsRouter.patch(
   "/:id/status",
   validate(updateCopilotStatusSchema),

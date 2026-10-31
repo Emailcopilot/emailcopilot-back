@@ -144,6 +144,13 @@ export async function sendCopilotTestEmail(
     html: body,
   });
 
+  const testMessageUrl = nodemailer.getTestMessageUrl(info);
+  if (testMessageUrl) {
+    console.log(`Test email sent: ${testMessageUrl}`);
+  } else {
+    console.log(`Test email sent to ${mail.email}`);
+  }
+
   return {
     to: mail.email,
     subject,

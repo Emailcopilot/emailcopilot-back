@@ -26,6 +26,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
     volumes:
       - /home/github-runner/emailcopilot-back/Caddyfile:/etc/caddy/Caddyfile
 

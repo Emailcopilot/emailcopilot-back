@@ -7,6 +7,7 @@ import {
   targetAudienceTable,
   emailAccountTable,
   emailTemplatesTable,
+  copilotTestEmailsTable,
   scrapeJobsTable,
   flightScheduleTable,
 } from "../db/schema";
@@ -101,11 +102,11 @@ async function assertCopilotWithinPlanLimit(userId: number, planId: string) {
   }
 }
 
-async function validateCopilotCanActivate(copilotId: number) {
+async function validateCopilotCanActivate(copilotId: number, userId: number) {
   const [copilot] = await db
     .select()
     .from(copilotsTable)
-    .where(eq(copilotsTable.id, copilotId));
+    .where(and(eq(copilotsTable.id, copilotId), eq(copilotsTable.userId, userId)));
 
   if (!copilot) {
     throw notFound("Copilot not found");
@@ -127,14 +128,16 @@ async function validateCopilotCanActivate(copilotId: number) {
     throw badRequest(`Cannot activate copilot. Missing: ${errors.join(", ")}`);
   }
 
-  if (!copilot.emailAccountId) {
-    throw badRequest("Email account is not properly configured");
+  const emailAccountId = copilot.emailAccountId;
+  const templateId = copilot.templateId;
+  if (!emailAccountId || !templateId) {
+    throw badRequest("Copilot email account and template are required");
   }
 
   const [profile] = await db
     .select()
     .from(emailAccountTable)
-    .where(eq(emailAccountTable.id, copilot.emailAccountId));
+    .where(eq(emailAccountTable.id, emailAccountId));
 
   if (!profile || !profile.email) {
     throw badRequest("Email account is not properly configured");
@@ -152,6 +155,28 @@ async function validateCopilotCanActivate(copilotId: number) {
 
   if (profile.smtpStatus === "error") {
     throw badRequest("Email account SMTP is in error state — verify or reconnect");
+  }
+
+  const [latestTest] = await db
+    .select({ status: copilotTestEmailsTable.status })
+    .from(copilotTestEmailsTable)
+    .where(
+      and(
+        eq(copilotTestEmailsTable.copilotId, copilot.id),
+        eq(copilotTestEmailsTable.emailAccountId, emailAccountId),
+        eq(copilotTestEmailsTable.templateId, templateId),
+      ),
+    )
+    .orderBy(
+      desc(copilotTestEmailsTable.createdAt),
+      desc(copilotTestEmailsTable.id),
+    )
+    .limit(1);
+
+  if (latestTest?.status !== "success") {
+    throw badRequest(
+      "Send a successful test email before activating this copilot",
+    );
   }
 }
 
@@ -574,6 +599,10 @@ export async function updateCopilotStatus(
   const userId = req.dbUser!.id;
   const data = req.body as UpdateCopilotStatusInput;
 
+  if (data.status === "active" || data.status === "running") {
+    await validateCopilotCanActivate(id, userId);
+  }
+
   const [updated] = await db
     .update(copilotsTable)
     .set({ status: data.status, updatedAt: new Date() })
@@ -582,10 +611,6 @@ export async function updateCopilotStatus(
 
   if (!updated)
     throw notFound("Copilot not found");
-
-  if (data.status === "active") {
-    await validateCopilotCanActivate(id);
-  }
 
   res.json(withLegacyCopilotKeys(updated));
 }
@@ -603,7 +628,7 @@ export async function runCopilot(req: Request<{ id: string }>, res: Response) {
     throw notFound("Copilot not found");
   }
 
-  await validateCopilotCanActivate(id);
+  await validateCopilotCanActivate(id, userId);
 
   console.log(
     ` ${new Date().toLocaleTimeString()} - 🚀 Activating copilot ${id} for scraping loop (user ${userId})`,
@@ -698,14 +723,80 @@ export async function sendTestEmail(
     throw badRequest("Template not found");
   }
 
+  let result: Awaited<ReturnType<typeof sendCopilotTestEmail>>;
   try {
-    const result = await sendCopilotTestEmail(account, template);
-    res.json({ success: true, ...result });
+    result = await sendCopilotTestEmail(account, template);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to send test email";
+    await db.insert(copilotTestEmailsTable).values({
+      copilotId: copilot.id,
+      emailAccountId,
+      templateId,
+      status: "failed",
+      toEmail: account.email,
+      errorMessage: message,
+    });
     throw badRequest(message);
   }
+
+  const [testEmail] = await db
+    .insert(copilotTestEmailsTable)
+    .values({
+      copilotId: copilot.id,
+      emailAccountId,
+      templateId,
+      status: "success",
+      toEmail: result.to,
+      subject: result.subject,
+      messageId: result.messageId,
+    })
+    .returning({
+      id: copilotTestEmailsTable.id,
+      createdAt: copilotTestEmailsTable.createdAt,
+    });
+  res.json({ success: true, ...result, testEmail });
+}
+
+export async function getCopilotTestEmail(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
+  const id = Number(req.params.id);
+  const userId = req.dbUser!.id;
+
+  const [copilot] = await db
+    .select()
+    .from(copilotsTable)
+    .where(and(eq(copilotsTable.id, id), eq(copilotsTable.userId, userId)));
+
+  if (!copilot) {
+    throw notFound("Copilot not found");
+  }
+
+  const [latestTest] =
+    copilot.emailAccountId && copilot.templateId
+      ? await db
+          .select()
+          .from(copilotTestEmailsTable)
+          .where(
+            and(
+              eq(copilotTestEmailsTable.copilotId, copilot.id),
+              eq(copilotTestEmailsTable.emailAccountId, copilot.emailAccountId),
+              eq(copilotTestEmailsTable.templateId, copilot.templateId),
+            ),
+          )
+          .orderBy(
+            desc(copilotTestEmailsTable.createdAt),
+            desc(copilotTestEmailsTable.id),
+          )
+          .limit(1)
+      : [];
+
+  res.json({
+    latestTest: latestTest ?? null,
+    testedCurrentConfiguration: latestTest?.status === "success",
+  });
 }
 
 export async function getCopilotStatus(

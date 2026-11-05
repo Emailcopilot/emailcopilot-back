@@ -64,6 +64,10 @@ export const copilotStatusEnum = pgEnum("copilot_status", [
   "running",
   "completed",
 ]);
+export const copilotTestEmailStatusEnum = pgEnum("copilot_test_email_status", [
+  "success",
+  "failed",
+]);
 
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "active",
@@ -340,6 +344,38 @@ export const copilotsTable = pgTable("copilots", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─── Copilot Test Emails ─────────────────────────────────────────────────────
+
+export const copilotTestEmailsTable = pgTable(
+  "copilot_test_emails",
+  {
+    id: serial("id").primaryKey(),
+    copilotId: integer("copilot_id")
+      .notNull()
+      .references(() => copilotsTable.id, { onDelete: "cascade" }),
+    emailAccountId: integer("email_account_id").references(
+      () => emailAccountTable.id,
+      { onDelete: "set null" },
+    ),
+    templateId: integer("template_id").references(
+      () => emailTemplatesTable.id,
+      { onDelete: "set null" },
+    ),
+    status: copilotTestEmailStatusEnum("status").notNull(),
+    toEmail: varchar("to_email", { length: 255 }).notNull(),
+    subject: text("subject"),
+    messageId: varchar("message_id", { length: 998 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("copilot_test_emails_copilot_created_idx").on(
+      table.copilotId,
+      table.createdAt,
+    ),
+  ],
+);
 
 // ─── Sent Emails ──────────────────────────────────────────────────────────────
 // One row per outbound message (initial outreach + follow-ups).

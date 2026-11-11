@@ -6,8 +6,11 @@ const mollie: MollieClient = createMollieClient({
   apiKey: process.env.MOLLIE_API_KEY!,
 });
 
-mollie.payments.get("tr_keHXjtLtCv5bDgQFtuUVJ").then((payment) => {
-    console.log(payment);
-    
-    console.log(payment._links);
-});
+async function test() {
+  const data = await mollie.payments.get("tr_cLeTUUtGwSif3pnKMD7YJ");
+
+
+  console.log(data)
+}
+
+test()

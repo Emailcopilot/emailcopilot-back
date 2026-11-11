@@ -82,6 +82,7 @@ export async function createUserWebhook(req: Request, res: Response) {
           firstName: data.first_name,
           lastName: data.last_name,
           email: data.email_addresses[0]?.email_address || "",
+          username: data.username || "",
         })
         .returning();
 

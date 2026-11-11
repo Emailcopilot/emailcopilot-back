@@ -10,6 +10,7 @@ import {
 import { eq, desc, and, ne, count } from "drizzle-orm";
 import createMollieClient, {
   MollieClient,
+  Payment,
   SequenceType,
 } from "@mollie/api-client";
 import {
@@ -319,6 +320,7 @@ async function processWebhookPayment(id: string) {
 
     if (payment.status === "paid") {
       console.log(`✅ Payment successful: user=${userId} plan=${planId}`);
+      console.log("Payment: ", payment)
       await handleSuccessfulPayment(payment, userId, plan);
     } else if (["failed", "expired", "canceled"].includes(payment.status)) {
       console.log(`❌ Payment ${payment.status}: ${id}`);
@@ -485,6 +487,10 @@ async function handleSuccessfulPayment(
         userId,
         subscriptionId: sub.id,
         molliePaymentId: payment.id,
+        method: payment.method ?? null,
+        consumerAccount: payment.details?.consumerAccount ?? null,
+        cardNumber: payment.details?.cardNumber ?? null,
+        cardLabel: payment.details?.cardLabel ?? null,
         amount: Math.round(charge.price * 100),
         currency: charge.currency.toLowerCase(),
         status: "paid",
@@ -498,6 +504,10 @@ async function handleSuccessfulPayment(
           status: "paid",
           paidAt: new Date(),
           subscriptionId: sub.id,
+          method: payment.method ?? null,
+          consumerAccount: payment.details?.consumerAccount ?? null,
+          cardNumber: payment.details?.cardNumber ?? null,
+          cardLabel: payment.details?.cardLabel ?? null,
         })
         .where(eq(invoicesTable.molliePaymentId, payment.id));
     }

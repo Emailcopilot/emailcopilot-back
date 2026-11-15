@@ -18,6 +18,19 @@ export async function listFlightSchedules(req: Request, res: Response) {
   res.json(rows);
 }
 
+export async function getLastFlightSchedule(req: Request, res: Response) {
+  const userId = req.dbUser!.id;
+  const [row] = await db
+    .select()
+    .from(flightScheduleTable)
+    .where(eq(flightScheduleTable.userId, userId))
+    .orderBy(desc(flightScheduleTable.createdAt))
+    .limit(1);
+
+  if (!row) throw notFound("Flight schedule not found");
+  res.json(row);
+}
+
 export async function getFlightSchedule(
   req: Request<{ id: string }>,
   res: Response,

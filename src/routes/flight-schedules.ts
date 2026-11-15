@@ -10,6 +10,8 @@ export const flightSchedulesRouter: Router = Router();
 
 flightSchedulesRouter.get("/", flightScheduleService.listFlightSchedules);
 
+flightSchedulesRouter.get("/last", flightScheduleService.getLastFlightSchedule);
+
 flightSchedulesRouter.get("/:id", flightScheduleService.getFlightSchedule);
 
 flightSchedulesRouter.post(

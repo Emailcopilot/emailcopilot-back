@@ -1,11 +1,7 @@
 export type PlanId = "starter" | "growth" | "scale";
 export type BillingInterval = "month" | "year";
 
-/** Annual checkout is one charge of monthly × 12 × 0.8 (save 20%). */
-const ANNUAL_DISCOUNT = 0.8;
-
-function annualCharge(monthlyPrice: number) {
-  const price = Math.round(monthlyPrice * 12 * ANNUAL_DISCOUNT * 100) / 100;
+function annualCharge(price: number) {
   return {
     price,
     amount: price.toFixed(2),
@@ -17,59 +13,59 @@ export const PLANS = [
   {
     id: "starter" as const,
     name: "Starter",
-    price: 9,
-    amount: "9.00",
+    price: 19,
+    amount: "19.00",
     interval: "1 month",
-    annual: annualCharge(9),
+    annual: annualCharge(179),
     currency: "EUR",
-    maxEmailsPerMonth: 250,
+    maxEmailsPerMonth: 500,
     maxCopilots: 1,
     maxEmailAccounts: 1,
     features: [
-      "1 Copilots",
-      "1 SMTP account",
-      "250 emails (~8/day)",
-      "Standard delivery speed",
-      "No data export",
+      "1 Copilot",
+      "1 email account",
+      "500 emails/month",
+      "CSV export",
+      "Email support",
     ],
   },
   {
     id: "growth" as const,
     name: "Growth",
-    price: 19,
-    amount: "19.00",
+    price: 39,
+    amount: "39.00",
     interval: "1 month",
-    annual: annualCharge(19),
+    annual: annualCharge(359),
     currency: "EUR",
-    maxEmailsPerMonth: 750,
+    maxEmailsPerMonth: 1200,
     maxCopilots: 3,
     maxEmailAccounts: 3,
     highlight: true,
     features: [
       "3 Copilots",
-      "3 SMTP accounts",
-      "750 emails (~26/day)",
-      "Faster delivery speed",
-      "Limited data export",
+      "3 email accounts",
+      "1,200 emails/month",
+      "CSV export",
+      "Email support",
     ],
   },
   {
     id: "scale" as const,
     name: "Scale",
-    price: 39,
-    amount: "39.00",
+    price: 79,
+    amount: "79.00",
     interval: "1 month",
-    annual: annualCharge(39),
+    annual: annualCharge(719),
     currency: "EUR",
-    maxEmailsPerMonth: 2000,
-    maxCopilots: null as number | null, // unlimited
-    maxEmailAccounts: null as number | null, // unlimited
+    maxEmailsPerMonth: 3000,
+    maxCopilots: 8,
+    maxEmailAccounts: 5,
     features: [
-      "Unlimited Copilots",
-      "Unlimited SMTP accounts",
-      "2000 emails (~65/day)",
-      "Priority delivery speed",
-      "Full data export",
+      "8 Copilots",
+      "5 email accounts",
+      "3,000 emails/month",
+      "CSV export",
+      "Priority support",
     ],
   },
 ];
@@ -85,23 +81,23 @@ export const PLAN_LIMITS: Record<
   }
 > = {
   starter: {
-    emailsPerMonth: 250,
+    emailsPerMonth: 500,
     copilots: 1,
     emailAccounts: 1,
     hasApiAccess: false,
     hasUnlimitedTemplates: false,
   },
   growth: {
-    emailsPerMonth: 750,
+    emailsPerMonth: 1200,
     copilots: 3,
     emailAccounts: 3,
     hasApiAccess: true,
     hasUnlimitedTemplates: true,
   },
   scale: {
-    emailsPerMonth: 2000,
-    copilots: null,
-    emailAccounts: null,
+    emailsPerMonth: 3000,
+    copilots: 8,
+    emailAccounts: 5,
     hasApiAccess: true,
     hasUnlimitedTemplates: true,
   },

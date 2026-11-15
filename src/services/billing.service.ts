@@ -48,12 +48,7 @@ function mapMollieStatus(
 }
 
 export function listPlans(_req: Request, res: Response) {
-  res.json(
-    PLANS.map((plan) => ({
-      ...plan,
-      maxEmailProfiles: plan.maxEmailAccounts,
-    })),
-  );
+  res.json(PLANS);
 }
 
 export async function getSubscription(req: Request, res: Response) {

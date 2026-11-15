@@ -25,10 +25,6 @@ import type {
   UpdateCopilotStatusInput,
 } from "../validators/copilot.validator";
 import {
-  normalizeCopilotInput,
-  withLegacyCopilotKeys,
-} from "../lib/api-aliases";
-import {
   encryptSecret,
   PROVIDER_PRESETS,
   sanitizeEmailAccount,
@@ -67,13 +63,13 @@ function prepareNestedEmailAccount(
 }
 
 function sanitizeCopilotRow<T extends { emailAccount?: unknown }>(row: T) {
-  if (!row.emailAccount) return withLegacyCopilotKeys(row);
-  return withLegacyCopilotKeys({
+  if (!row.emailAccount) return row;
+  return {
     ...row,
     emailAccount: sanitizeEmailAccount(
       row.emailAccount as Parameters<typeof sanitizeEmailAccount>[0],
     ),
-  });
+  };
 }
 
 async function getActiveSubscription(userId: number) {
@@ -229,7 +225,7 @@ export async function getCopilot(req: Request<{ id: string }>, res: Response) {
 
 export async function createCopilot(req: Request, res: Response) {
   const userId = req.dbUser!.id;
-  const data = normalizeCopilotInput(req.body as CreateCopilotInput);
+  const data = req.body as CreateCopilotInput;
 
   const sub = await getActiveSubscription(userId);
   await assertCopilotWithinPlanLimit(userId, sub.planId);
@@ -356,7 +352,7 @@ export async function updateCopilot(
 ) {
   const id = Number(req.params.id);
   const userId = req.dbUser!.id;
-  const data = normalizeCopilotInput(req.body as UpdateCopilotInput);
+  const data = req.body as UpdateCopilotInput;
   const {
     targetAudience: nestedTargetAudience,
     emailAccount: nestedEmailAccount,
@@ -588,7 +584,7 @@ export async function duplicateCopilot(
 
   await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
 
-  res.status(201).json(withLegacyCopilotKeys(created));
+  res.status(201).json(created);
 }
 
 export async function updateCopilotStatus(
@@ -612,7 +608,7 @@ export async function updateCopilotStatus(
   if (!updated)
     throw notFound("Copilot not found");
 
-  res.json(withLegacyCopilotKeys(updated));
+  res.json(updated);
 }
 
 export async function runCopilot(req: Request<{ id: string }>, res: Response) {

@@ -7,7 +7,6 @@ import {
 import * as targetAudienceService from "../services/target-audience.service";
 
 export const targetAudiencesRouter: Router = Router();
-export const scrapeProfilesRouter = targetAudiencesRouter;
 
 targetAudiencesRouter.get("/", targetAudienceService.listTargetAudiences);
 

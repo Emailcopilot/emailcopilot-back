@@ -271,7 +271,6 @@ export async function getLimits(req: Request, res: Response) {
       emailsPerMonth: planLimits.emailsPerMonth,
       copilots: planLimits.copilots,
       emailAccounts: planLimits.emailAccounts,
-      emailProfiles: planLimits.emailAccounts,
       hasApiAccess: planLimits.hasApiAccess,
       hasUnlimitedTemplates: planLimits.hasUnlimitedTemplates,
     },
@@ -288,9 +287,7 @@ export async function getLimits(req: Request, res: Response) {
           ? null
           : Math.max(0, planLimits.copilots - copilotsCount),
       emailAccountsCount,
-      emailProfilesCount: emailAccountsCount,
       emailAccountsRemaining,
-      emailProfilesRemaining: emailAccountsRemaining,
     },
   });
 }

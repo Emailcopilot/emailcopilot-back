@@ -42,9 +42,7 @@ export const createCopilotSchema = z.object({
   name: z.string().min(1).max(150),
   description: z.string().optional(),
   emailAccountId: z.number().int().positive().optional(),
-  emailProfileId: z.number().int().positive().optional(),
   emailAccount: emailAccountObject.optional(),
-  emailProfile: emailAccountObject.optional(),
   templateId: z.number().int().positive().optional(),
   template: z
     .object({
@@ -54,9 +52,7 @@ export const createCopilotSchema = z.object({
     })
     .optional(),
   targetAudienceId: z.number().int().positive().optional(),
-  scrapeProfileId: z.number().int().positive().optional(),
   targetAudience: targetAudienceObject.optional(),
-  scrapeProfile: targetAudienceObject.optional(),
   flightScheduleId: z.number().int().positive().optional(),
   flightSchedule: flightScheduleObject.optional(),
 });

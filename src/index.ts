@@ -63,23 +63,12 @@ app.use("/users", usersRouter);
 
 app.use(requireAuth);
 
-function deprecateLegacyRoute(
-  _req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-) {
-  res.set("Deprecation", "true");
-  next();
-}
-
 app.use("/leads", leadsRouter);
 app.use("/templates", templatesRouter);
 app.use("/copilots", copilotsRouter);
 app.use("/scrape-jobs", scrapeJobsRouter);
 app.use("/email-accounts", emailAccountsRouter);
-app.use("/email-profiles", deprecateLegacyRoute, emailAccountsRouter);
 app.use("/target-audiences", targetAudiencesRouter);
-app.use("/scrape-profiles", deprecateLegacyRoute, targetAudiencesRouter);
 app.use("/flight-schedules", flightSchedulesRouter);
 app.use("/analytics", analyticsRouter);
 

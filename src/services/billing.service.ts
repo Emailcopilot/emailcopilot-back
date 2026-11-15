@@ -48,7 +48,23 @@ function mapMollieStatus(
 }
 
 export function listPlans(_req: Request, res: Response) {
-  res.json(PLANS);
+  res.json(
+    PLANS.map((plan) => {
+      const { annualPrice, ...publicPlan } = plan;
+      const monthly = getPlanCharge(plan, "month");
+      const annual = getPlanCharge(plan, "year");
+
+      return {
+        ...publicPlan,
+        ...monthly,
+        annual: {
+          price: annualPrice,
+          amount: annual.amount,
+          interval: annual.interval,
+        },
+      };
+    }),
+  );
 }
 
 export async function getSubscription(req: Request, res: Response) {
@@ -266,8 +282,6 @@ export async function getLimits(req: Request, res: Response) {
       emailsPerMonth: planLimits.emailsPerMonth,
       copilots: planLimits.copilots,
       emailAccounts: planLimits.emailAccounts,
-      hasApiAccess: planLimits.hasApiAccess,
-      hasUnlimitedTemplates: planLimits.hasUnlimitedTemplates,
     },
     usage: {
       emailsSent,

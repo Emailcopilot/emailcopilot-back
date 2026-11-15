@@ -1,22 +1,12 @@
 export type PlanId = "starter" | "growth" | "scale";
 export type BillingInterval = "month" | "year";
 
-function annualCharge(price: number) {
-  return {
-    price,
-    amount: price.toFixed(2),
-    interval: "12 months" as const,
-  };
-}
-
 export const PLANS = [
   {
     id: "starter" as const,
     name: "Starter",
     price: 19,
-    amount: "19.00",
-    interval: "1 month",
-    annual: annualCharge(179),
+    annualPrice: 179,
     currency: "EUR",
     maxEmailsPerMonth: 500,
     maxCopilots: 1,
@@ -33,9 +23,7 @@ export const PLANS = [
     id: "growth" as const,
     name: "Growth",
     price: 39,
-    amount: "39.00",
-    interval: "1 month",
-    annual: annualCharge(359),
+    annualPrice: 359,
     currency: "EUR",
     maxEmailsPerMonth: 1200,
     maxCopilots: 3,
@@ -53,9 +41,7 @@ export const PLANS = [
     id: "scale" as const,
     name: "Scale",
     price: 79,
-    amount: "79.00",
-    interval: "1 month",
-    annual: annualCharge(719),
+    annualPrice: 719,
     currency: "EUR",
     maxEmailsPerMonth: 3000,
     maxCopilots: 8,
@@ -70,38 +56,22 @@ export const PLANS = [
   },
 ];
 
-export const PLAN_LIMITS: Record<
-  PlanId,
-  {
-    emailsPerMonth: number;
-    copilots: number | null;
-    emailAccounts: number | null;
-    hasApiAccess: boolean;
-    hasUnlimitedTemplates: boolean;
-  }
-> = {
-  starter: {
-    emailsPerMonth: 500,
-    copilots: 1,
-    emailAccounts: 1,
-    hasApiAccess: false,
-    hasUnlimitedTemplates: false,
-  },
-  growth: {
-    emailsPerMonth: 1200,
-    copilots: 3,
-    emailAccounts: 3,
-    hasApiAccess: true,
-    hasUnlimitedTemplates: true,
-  },
-  scale: {
-    emailsPerMonth: 3000,
-    copilots: 8,
-    emailAccounts: 5,
-    hasApiAccess: true,
-    hasUnlimitedTemplates: true,
-  },
+type PlanLimits = {
+  emailsPerMonth: number;
+  copilots: number | null;
+  emailAccounts: number | null;
 };
+
+export const PLAN_LIMITS = Object.fromEntries(
+  PLANS.map((plan) => [
+    plan.id,
+    {
+      emailsPerMonth: plan.maxEmailsPerMonth,
+      copilots: plan.maxCopilots,
+      emailAccounts: plan.maxEmailAccounts,
+    },
+  ]),
+) as Record<PlanId, PlanLimits>;
 
 export type Plan = (typeof PLANS)[number];
 
@@ -115,19 +85,12 @@ export function parseBillingInterval(value: unknown): BillingInterval {
 
 /** Mollie amount and interval for a plan at the chosen billing cadence. */
 export function getPlanCharge(plan: Plan, interval: BillingInterval) {
-  if (interval === "year") {
-    return {
-      currency: plan.currency,
-      price: plan.annual.price,
-      amount: plan.annual.amount,
-      interval: plan.annual.interval,
-    };
-  }
+  const price = interval === "year" ? plan.annualPrice : plan.price;
   return {
     currency: plan.currency,
-    price: plan.price,
-    amount: plan.amount,
-    interval: plan.interval,
+    price,
+    amount: price.toFixed(2),
+    interval: interval === "year" ? "12 months" : "1 month",
   };
 }
 
